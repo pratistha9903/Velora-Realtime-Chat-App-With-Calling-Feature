@@ -13,6 +13,11 @@ A full-stack, WhatsApp-style real-time chat application built with **React**, **
 > Open the live app, register an account, and use a second browser (incognito) to test real-time chat between two users.
 
 ---
+## Demo Video
+
+https://github.com/user-attachments/assets/235eb108-585c-401f-848d-7457a6bf661b
+
+---
 
 ## Table of Contents
 
@@ -77,20 +82,30 @@ The application follows the assignment requirement of using **Socket.io** for re
 
 | Feature | Status |
 |---------|--------|
-| User authentication (JWT + bcrypt) | ✅ |
+| User authentication (JWT + refresh tokens) | ✅ |
+| Forgot password + reset | ✅ |
+| Email verification (demo / optional SMTP) | ✅ |
+| Google Login (via `VITE_GOOGLE_CLIENT_ID`) | ✅ |
+| Profile picture + bio | ✅ |
+| Last seen | ✅ |
 | Typing indicator | ✅ |
 | Online / offline status | ✅ |
 | Message delivered status | ✅ |
 | Message read receipts | ✅ |
+| Reply / edit / copy message | ✅ |
+| Delete for me + delete for everyone | ✅ |
+| Message reactions | ✅ |
+| Star message | ✅ |
+| Pin / mute / archive chat | ✅ |
+| Image + PDF/document upload | ✅ |
+| Voice notes | ✅ |
+| Cloudinary (optional env) | ✅ |
 | MongoDB storage | ✅ |
 | Private chats | ✅ |
 | Group chats | ✅ |
 | In-app + browser notifications | ✅ |
-| Image upload | ✅ |
-| Reply / edit / delete messages | ✅ |
-| Message search | ✅ |
-| Loading skeletons | ✅ |
-| Rate limiting & security headers | ✅ |
+| Emoji picker | ✅ |
+| Rate limiting, Helmet, request logging | ✅ |
 
 ---
 

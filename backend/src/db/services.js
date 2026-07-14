@@ -12,6 +12,9 @@ export function formatUser(doc) {
     email: u.email,
     displayName: u.displayName,
     avatarColor: u.avatarColor,
+    avatarUrl: u.avatarUrl || null,
+    bio: u.bio || '',
+    emailVerified: !!u.emailVerified,
     createdAt: u.createdAt,
     lastSeen: u.lastSeen,
   };
@@ -25,6 +28,8 @@ function formatMember(doc) {
     username: u.username,
     displayName: u.displayName,
     avatarColor: u.avatarColor,
+    avatarUrl: u.avatarUrl || null,
+    bio: u.bio || '',
     lastSeen: u.lastSeen,
   };
 }
@@ -52,6 +57,17 @@ export function formatMessage(doc, currentUserId, memberCount = 2) {
   if (!doc) return null;
   const m = doc.toObject ? doc.toObject() : doc;
   const user = m.userId;
+  const hiddenFor = m.hiddenFor?.map((id) => id.toString()) || [];
+  if (hiddenFor.includes(currentUserId)) return null;
+
+  const reactions = {};
+  for (const r of m.reactions || []) {
+    const emoji = r.emoji;
+    if (!reactions[emoji]) reactions[emoji] = { emoji, count: 0, reacted: false, userIds: [] };
+    reactions[emoji].count += 1;
+    reactions[emoji].userIds.push(r.userId.toString());
+    if (r.userId.toString() === currentUserId) reactions[emoji].reacted = true;
+  }
 
   return {
     id: m._id.toString(),
@@ -61,12 +77,18 @@ export function formatMessage(doc, currentUserId, memberCount = 2) {
     username: user.username,
     displayName: user.displayName,
     avatarColor: user.avatarColor,
+    avatarUrl: user.avatarUrl || null,
     content: m.deletedAt ? null : m.content,
     type: m.type,
     imageUrl: m.deletedAt ? null : m.imageUrl,
+    fileUrl: m.deletedAt ? null : m.fileUrl,
+    fileName: m.deletedAt ? null : m.fileName,
+    fileSize: m.deletedAt ? null : m.fileSize,
     replyTo: m.replyTo?._id?.toString() || m.replyTo?.toString() || null,
     replyContent: m.replyTo?.content || null,
     replyUsername: m.replyTo?.userId?.username || null,
+    reactions: Object.values(reactions),
+    starred: m.starredBy?.some((id) => id.toString() === currentUserId) || false,
     editedAt: m.editedAt,
     deletedAt: m.deletedAt,
     createdAt: m.createdAt,
@@ -84,6 +106,7 @@ async function populateConversation(conv, userId) {
   const lastMsg = await Message.findOne({
     conversationId: c._id,
     deletedAt: null,
+    hiddenFor: { $ne: userId },
   }).sort({ createdAt: -1 }).lean();
 
   const memberEntry = c.members?.find((m) => m.userId.toString() === userId);
@@ -91,19 +114,30 @@ async function populateConversation(conv, userId) {
     conversationId: c._id,
     userId: { $ne: userId },
     deletedAt: null,
+    hiddenFor: { $ne: userId },
     createdAt: { $gt: memberEntry?.lastReadAt || new Date(0) },
   });
 
   let displayName = c.name;
   let avatarColor = c.avatarColor;
+  let avatarUrl = null;
+  let otherLastSeen = null;
 
   if (c.type === 'private') {
     const other = members.find((m) => m.id !== userId);
     if (other) {
       displayName = other.displayName;
       avatarColor = other.avatarColor;
+      avatarUrl = other.avatarUrl || null;
+      otherLastSeen = other.lastSeen || null;
     }
   }
+
+  const preview =
+    lastMsg?.type === 'image' ? '📷 Photo'
+      : lastMsg?.type === 'file' ? `📎 ${lastMsg.fileName || 'File'}`
+        : lastMsg?.type === 'audio' ? '🎤 Voice note'
+          : lastMsg?.content || null;
 
   return {
     id: c._id.toString(),
@@ -114,25 +148,52 @@ async function populateConversation(conv, userId) {
     createdBy: c.createdBy?.toString(),
     createdAt: c.createdAt,
     avatarColor,
-    lastMessage: lastMsg?.type === 'image' ? '📷 Photo' : lastMsg?.content || null,
+    avatarUrl,
+    otherLastSeen,
+    lastMessage: preview,
     lastMessageAt: lastMsg?.createdAt || null,
     unreadCount: unread,
     memberCount: members.length,
     members,
+    archived: !!memberEntry?.archived,
+    muted: !!memberEntry?.muted,
+    pinned: !!memberEntry?.pinned,
   };
 }
 
 // ─── Users ───
 
-export async function createUser({ username, email, passwordHash, displayName }) {
+export async function createUser({
+  username, email, passwordHash, displayName, emailVerifyToken = null, googleId = null, emailVerified = false,
+}) {
   const user = await User.create({
     username,
     email,
     passwordHash,
     displayName: displayName || username,
     avatarColor: getAvatarColor(username),
+    emailVerifyToken,
+    emailVerified,
+    googleId,
   });
   return formatUser(user);
+}
+
+export async function updateUserProfile(userId, updates) {
+  const allowed = {};
+  if (updates.displayName !== undefined) allowed.displayName = updates.displayName.trim();
+  if (updates.bio !== undefined) allowed.bio = String(updates.bio).slice(0, 160);
+  if (updates.avatarUrl !== undefined) allowed.avatarUrl = updates.avatarUrl;
+  const user = await User.findByIdAndUpdate(userId, allowed, { new: true });
+  return formatUser(user);
+}
+
+export async function setRefreshTokenHash(userId, hash) {
+  await User.findByIdAndUpdate(userId, { refreshTokenHash: hash });
+}
+
+export async function clearRefreshToken(userId) {
+  await User.findByIdAndUpdate(userId, { refreshTokenHash: null });
 }
 
 export async function getUserById(id) {
@@ -249,10 +310,25 @@ export async function getUserConversations(userId) {
   return populated
     .filter(Boolean)
     .sort((a, b) => {
+      if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
       const aT = a.lastMessageAt || a.createdAt;
       const bT = b.lastMessageAt || b.createdAt;
       return new Date(bT) - new Date(aT);
     });
+}
+
+export async function updateConversationPrefs(conversationId, userId, prefs) {
+  const conv = await Conversation.findOne({ _id: conversationId, 'members.userId': userId });
+  if (!conv) return null;
+
+  const member = conv.members.find((m) => m.userId.toString() === userId);
+  if (!member) return null;
+
+  if (prefs.archived !== undefined) member.archived = !!prefs.archived;
+  if (prefs.muted !== undefined) member.muted = !!prefs.muted;
+  if (prefs.pinned !== undefined) member.pinned = !!prefs.pinned;
+  await conv.save();
+  return populateConversation(conv, userId);
 }
 
 export async function getConversationMembers(conversationId) {
@@ -292,24 +368,27 @@ export async function getConversationMessages(conversationId, userId, limit = 10
   const conv = await Conversation.findById(conversationId);
   const memberCount = conv?.members?.length || 2;
 
-  const messages = await Message.find(query)
+  const messages = await Message.find({ ...query, hiddenFor: { $ne: userId } })
     .sort({ createdAt: -1 })
     .limit(limit)
-    .populate('userId', 'username displayName avatarColor')
+    .populate('userId', 'username displayName avatarColor avatarUrl')
     .populate({
       path: 'replyTo',
       populate: { path: 'userId', select: 'username' },
     })
     .lean();
 
-  return messages.reverse().map((m) => formatMessage(m, userId, memberCount));
+  return messages
+    .reverse()
+    .map((m) => formatMessage(m, userId, memberCount))
+    .filter(Boolean);
 }
 
 export const getRoomMessages = getConversationMessages;
 
 export async function getMessageById(messageId, userId) {
   const msg = await Message.findById(messageId)
-    .populate('userId', 'username displayName avatarColor')
+    .populate('userId', 'username displayName avatarColor avatarUrl')
     .populate({ path: 'replyTo', populate: { path: 'userId', select: 'username' } });
 
   if (!msg) return null;
@@ -317,7 +396,10 @@ export async function getMessageById(messageId, userId) {
   return formatMessage(msg, userId, conv?.members?.length || 2);
 }
 
-export async function createMessage({ conversationId, roomId, userId, content, type = 'text', imageUrl = null, replyTo = null }) {
+export async function createMessage({
+  conversationId, roomId, userId, content, type = 'text',
+  imageUrl = null, fileUrl = null, fileName = null, fileSize = null, replyTo = null,
+}) {
   const convId = conversationId || roomId;
 
   const message = await Message.create({
@@ -326,6 +408,9 @@ export async function createMessage({ conversationId, roomId, userId, content, t
     content,
     type,
     imageUrl,
+    fileUrl,
+    fileName,
+    fileSize,
     replyTo,
     deliveredTo: [userId],
     readBy: [{ userId, readAt: new Date() }],
@@ -359,14 +444,52 @@ export async function editMessage(messageId, userId, content) {
   return getMessageById(messageId, userId);
 }
 
-export async function deleteMessage(messageId, userId) {
-  const msg = await Message.findOne({ _id: messageId, userId, deletedAt: null });
-  if (!msg) return null;
+export async function deleteMessage(messageId, userId, scope = 'everyone') {
+  const msg = await Message.findById(messageId);
+  if (!msg || msg.deletedAt) return null;
 
+  if (scope === 'me') {
+    if (!msg.hiddenFor.some((id) => id.toString() === userId)) {
+      msg.hiddenFor.push(userId);
+      await msg.save();
+    }
+    return { id: messageId, deletedForMe: true, roomId: msg.conversationId.toString() };
+  }
+
+  if (msg.userId.toString() !== userId) return null;
   msg.deletedAt = new Date();
   msg.content = '';
+  msg.imageUrl = null;
+  msg.fileUrl = null;
   await msg.save();
+  return getMessageById(messageId, userId);
+}
 
+export async function toggleReaction(messageId, userId, emoji) {
+  const msg = await Message.findById(messageId);
+  if (!msg || msg.deletedAt) return null;
+
+  const existing = msg.reactions.findIndex(
+    (r) => r.userId.toString() === userId && r.emoji === emoji
+  );
+  if (existing >= 0) {
+    msg.reactions.splice(existing, 1);
+  } else {
+    msg.reactions = msg.reactions.filter((r) => r.userId.toString() !== userId || r.emoji !== emoji);
+    msg.reactions.push({ emoji, userId });
+  }
+  await msg.save();
+  return getMessageById(messageId, userId);
+}
+
+export async function toggleStarMessage(messageId, userId) {
+  const msg = await Message.findById(messageId);
+  if (!msg || msg.deletedAt) return null;
+
+  const idx = msg.starredBy.findIndex((id) => id.toString() === userId);
+  if (idx >= 0) msg.starredBy.splice(idx, 1);
+  else msg.starredBy.push(userId);
+  await msg.save();
   return getMessageById(messageId, userId);
 }
 

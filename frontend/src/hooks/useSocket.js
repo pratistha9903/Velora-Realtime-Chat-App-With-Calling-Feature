@@ -88,8 +88,16 @@ export function useSocket(token, user, onAuthError) {
     socketRef.current?.emit('message:edit', { messageId, content });
   }, []);
 
-  const deleteMessage = useCallback((messageId) => {
-    socketRef.current?.emit('message:delete', { messageId });
+  const deleteMessage = useCallback((messageId, scope = 'everyone') => {
+    socketRef.current?.emit('message:delete', { messageId, scope });
+  }, []);
+
+  const reactMessage = useCallback((messageId, emoji) => {
+    socketRef.current?.emit('message:react', { messageId, emoji });
+  }, []);
+
+  const starMessage = useCallback((messageId) => {
+    socketRef.current?.emit('message:star', { messageId });
   }, []);
 
   const markRead = useCallback((roomId, messageId) => {
@@ -119,6 +127,8 @@ export function useSocket(token, user, onAuthError) {
     sendMessage,
     editMessage,
     deleteMessage,
+    reactMessage,
+    starMessage,
     markRead,
     startTyping,
     stopTyping,

@@ -8,6 +8,7 @@ import {
   getRoomMembers,
   getAllUsers,
   searchUsers,
+  updateConversationPrefs,
 } from '../db/services.js';
 import { notifyConversationCreated } from '../sockets/socketHelpers.js';
 
@@ -110,6 +111,21 @@ router.get('/:roomId/members', async (req, res, next) => {
   try {
     const members = await getRoomMembers(req.params.roomId);
     res.json({ success: true, data: members });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.patch('/:roomId/prefs', async (req, res, next) => {
+  try {
+    const { archived, muted, pinned } = req.body;
+    const room = await updateConversationPrefs(req.params.roomId, req.user.id, {
+      archived,
+      muted,
+      pinned,
+    });
+    if (!room) return res.status(404).json({ success: false, error: 'Conversation not found' });
+    res.json({ success: true, data: room });
   } catch (error) {
     next(error);
   }

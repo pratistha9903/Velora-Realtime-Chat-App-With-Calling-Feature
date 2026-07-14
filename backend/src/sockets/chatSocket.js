@@ -8,6 +8,8 @@ import {
   getRoomMembers,
   updateLastSeen,
   getMessageById,
+  toggleReaction,
+  toggleStarMessage,
 } from '../db/services.js';
 import {
   registerUserSocket,
@@ -93,12 +95,12 @@ export function setupChatSocket(io) {
       }
     });
 
-    socket.on('message:send', async ({ roomId, content, type, imageUrl, replyTo }) => {
+    socket.on('message:send', async ({ roomId, content, type, imageUrl, fileUrl, fileName, fileSize, replyTo }) => {
       if (!(await isRoomMember(roomId, user.id))) {
         socket.emit('error', { message: 'Not a member of this conversation' });
         return;
       }
-      if (!content?.trim() && !imageUrl) {
+      if (!content?.trim() && !imageUrl && !fileUrl) {
         socket.emit('error', { message: 'Message cannot be empty' });
         return;
       }
@@ -114,6 +116,9 @@ export function setupChatSocket(io) {
           content: content?.trim() || '',
           type: type || 'text',
           imageUrl,
+          fileUrl,
+          fileName,
+          fileSize,
           replyTo,
         });
 
@@ -129,11 +134,20 @@ export function setupChatSocket(io) {
           await markMessageDelivered(message.id, member.id);
 
           if (!isViewing) {
+            const { getRoomById } = await import('../db/services.js');
+            const roomMeta = await getRoomById(roomId, member.id);
+            if (roomMeta?.muted) continue;
+
+            const body =
+              message.type === 'image' ? '📷 Photo'
+                : message.type === 'file' ? `📎 ${message.fileName || 'File'}`
+                  : message.type === 'audio' ? '🎤 Voice note'
+                    : message.content;
             sendNotification(io, {
               userId: member.id,
               type: 'message',
               title: user.displayName,
-              body: message.type === 'image' ? '📷 Photo' : message.content,
+              body,
               conversationId: roomId,
               message,
             });
@@ -172,14 +186,32 @@ export function setupChatSocket(io) {
       io.to(`room:${message.roomId}`).emit('message:updated', message);
     });
 
-    socket.on('message:delete', async ({ messageId }) => {
-      const message = await deleteMessage(messageId, user.id);
+    socket.on('message:delete', async ({ messageId, scope = 'everyone' }) => {
+      const message = await deleteMessage(messageId, user.id, scope || 'everyone');
       if (!message) {
         socket.emit('error', { message: 'Cannot delete this message' });
         return;
       }
 
+      if (message.deletedForMe) {
+        socket.emit('message:deleted-for-me', { id: messageId, roomId: message.roomId });
+        return;
+      }
+
       io.to(`room:${message.roomId}`).emit('message:updated', message);
+    });
+
+    socket.on('message:react', async ({ messageId, emoji }) => {
+      if (!emoji) return;
+      const message = await toggleReaction(messageId, user.id, emoji);
+      if (!message) return;
+      io.to(`room:${message.roomId}`).emit('message:updated', message);
+    });
+
+    socket.on('message:star', async ({ messageId }) => {
+      const message = await toggleStarMessage(messageId, user.id);
+      if (!message) return;
+      socket.emit('message:updated', message);
     });
 
     socket.on('message:read', async ({ roomId, messageId }) => {

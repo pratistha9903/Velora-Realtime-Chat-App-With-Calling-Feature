@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { LogOut, Wifi, WifiOff, Users, MessageCircle } from 'lucide-react';
+import { LogOut, Wifi, WifiOff, Users, MessageCircle, Pin, VolumeX, Archive } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
 import { useNotifications } from '../../context/NotificationContext';
@@ -15,8 +15,10 @@ import CreateGroupModal from './CreateGroupModal';
 import NewChatModal from './NewChatModal';
 import SearchModal from './SearchModal';
 import NotificationPanel from './NotificationPanel';
+import ProfileModal from '../auth/ProfileModal';
 import Avatar from '../ui/Avatar';
 import { MessageListSkeleton } from '../ui/Skeleton';
+import { formatDistanceToNow, parseISO } from 'date-fns';
 
 export default function ChatApp() {
   const { user, logout, token } = useAuth();
@@ -42,11 +44,12 @@ export default function ChatApp() {
   const [showSearch, setShowSearch] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
   const [showMembers, setShowMembers] = useState(true);
+  const [showProfile, setShowProfile] = useState(false);
 
   const {
     connected, onlineUsers, typingInRoom,
     joinRoom, leaveRoom, sendMessage, editMessage, deleteMessage,
-    markRead, startTyping, stopTyping, on,
+    reactMessage, starMessage, markRead, startTyping, stopTyping, on,
   } = useSocket(token, user, handleAuthError);
 
   const handleLogout = useCallback(() => {
@@ -184,6 +187,10 @@ export default function ChatApp() {
       addToast(`New conversation: ${room.displayName || room.name}`, 'info');
     }));
 
+    cleanups.push(on('message:deleted-for-me', ({ id }) => {
+      setMessages((prev) => prev.filter((m) => m.id !== id));
+    }));
+
     cleanups.push(on('notification:new', (notif) => {
       addNotification(notif);
       if (activeRoomRef.current !== notif.conversationId) {
@@ -202,12 +209,50 @@ export default function ChatApp() {
 
   const handleSend = (payload) => {
     if (!activeRoom) return;
-    sendMessage(activeRoom.id, payload.content, {
+    sendMessage(activeRoom.id, payload.content || '', {
       type: payload.type,
       imageUrl: payload.imageUrl,
+      fileUrl: payload.fileUrl,
+      fileName: payload.fileName,
+      fileSize: payload.fileSize,
       replyTo: payload.replyTo,
     });
   };
+
+  const handleDelete = (messageId, scope = 'everyone') => {
+    deleteMessage(messageId, scope);
+    if (scope === 'me') {
+      setMessages((prev) => prev.filter((m) => m.id !== messageId));
+    }
+  };
+
+  const updatePrefs = async (prefs) => {
+    if (!activeRoom) return;
+    try {
+      const room = await api.updateRoomPrefs(activeRoom.id, prefs);
+      setActiveRoom(room);
+      setConversations((prev) => prev.map((r) => (r.id === room.id ? { ...r, ...room } : r)));
+      addToast('Chat preferences updated', 'success');
+    } catch (err) {
+      addToast(err.message, 'error');
+    }
+  };
+
+  const lastSeenLabel = (() => {
+    if (!activeRoom || activeRoom.type !== 'dm') return null;
+    const online = onlineUsers.some((u) =>
+      activeRoom.members?.some((m) => m.id === u.id && m.id !== user.id)
+    );
+    if (online) return 'Online';
+    const other = activeRoom.members?.find((m) => m.id !== user.id);
+    const seen = activeRoom.otherLastSeen || other?.lastSeen;
+    if (!seen) return 'Offline';
+    try {
+      return `Last seen ${formatDistanceToNow(parseISO(seen), { addSuffix: true })}`;
+    } catch {
+      return 'Offline';
+    }
+  })();
 
   const handleCreateGroup = async (data) => {
     const room = await api.createGroup(data);
@@ -269,6 +314,7 @@ export default function ChatApp() {
         onNewGroup={() => setShowNewGroup(true)}
         onSearch={() => setShowSearch(true)}
         onNotifications={() => setShowNotifications(!showNotifications)}
+        onProfile={() => setShowProfile(true)}
         notificationCount={unreadCount}
         user={user}
         loading={loading}
@@ -291,6 +337,7 @@ export default function ChatApp() {
                   <Avatar
                     name={activeRoom.displayName}
                     color={activeRoom.members?.find((m) => m.id !== user.id)?.avatarColor || '#6366f1'}
+                    avatarUrl={activeRoom.avatarUrl || activeRoom.members?.find((m) => m.id !== user.id)?.avatarUrl}
                     size={40}
                     online={onlineUsers.some((u) =>
                       activeRoom.members?.some((m) => m.id === u.id && m.id !== user.id)
@@ -304,9 +351,7 @@ export default function ChatApp() {
                   <p>
                     {activeRoom.type === 'group'
                       ? `${members.length} members`
-                      : onlineUsers.some((u) => activeRoom.members?.some((m) => m.id === u.id && m.id !== user.id))
-                        ? 'Online'
-                        : 'Offline'}
+                      : lastSeenLabel}
                   </p>
                 </div>
               </div>
@@ -315,6 +360,27 @@ export default function ChatApp() {
                   {connected ? <Wifi size={14} /> : <WifiOff size={14} />}
                   {connected ? 'Live' : 'Offline'}
                 </div>
+                <button
+                  className={`icon-btn ${activeRoom.pinned ? 'active' : ''}`}
+                  title={activeRoom.pinned ? 'Unpin' : 'Pin chat'}
+                  onClick={() => updatePrefs({ pinned: !activeRoom.pinned })}
+                >
+                  <Pin size={16} />
+                </button>
+                <button
+                  className={`icon-btn ${activeRoom.muted ? 'active' : ''}`}
+                  title={activeRoom.muted ? 'Unmute' : 'Mute chat'}
+                  onClick={() => updatePrefs({ muted: !activeRoom.muted })}
+                >
+                  <VolumeX size={16} />
+                </button>
+                <button
+                  className={`icon-btn ${activeRoom.archived ? 'active' : ''}`}
+                  title={activeRoom.archived ? 'Unarchive' : 'Archive chat'}
+                  onClick={() => updatePrefs({ archived: !activeRoom.archived })}
+                >
+                  <Archive size={16} />
+                </button>
                 {activeRoom.type === 'group' && (
                   <button className="icon-btn" onClick={() => setShowMembers(!showMembers)} title="Members">
                     <Users size={18} />
@@ -344,7 +410,9 @@ export default function ChatApp() {
                         showAvatar={showAvatar}
                         onReply={setReplyTo}
                         onEdit={editMessage}
-                        onDelete={deleteMessage}
+                        onDelete={handleDelete}
+                        onReact={reactMessage}
+                        onStar={starMessage}
                       />
                     </div>
                   );
@@ -388,6 +456,7 @@ export default function ChatApp() {
 
       {showNewChat && <NewChatModal onClose={() => setShowNewChat(false)} onChatCreated={handleChatCreated} />}
       {showNewGroup && <CreateGroupModal onClose={() => setShowNewGroup(false)} onCreate={handleCreateGroup} />}
+      {showProfile && <ProfileModal onClose={() => setShowProfile(false)} />}
       {showSearch && (
         <SearchModal
           onClose={() => setShowSearch(false)}

@@ -1,4 +1,4 @@
-import { MessageCircle, Plus, Search, Bell, Users, UserPlus } from 'lucide-react';
+import { MessageCircle, Search, Bell, Users, UserPlus, Pin, VolumeX, Archive } from 'lucide-react';
 import { format, parseISO, isToday, isYesterday } from 'date-fns';
 import Avatar from '../ui/Avatar';
 import { SidebarSkeleton } from '../ui/Skeleton';
@@ -19,12 +19,15 @@ export default function ConversationSidebar({
   onNewGroup,
   onSearch,
   onNotifications,
+  onProfile,
   notificationCount,
   user,
   loading,
   onlineUsers,
+  showArchived = false,
 }) {
   const onlineIds = new Set(onlineUsers.map((u) => u.id));
+  const visible = conversations.filter((c) => (showArchived ? c.archived : !c.archived));
 
   return (
     <aside className="conv-sidebar">
@@ -47,15 +50,17 @@ export default function ConversationSidebar({
       <div className="conv-list">
         {loading ? (
           <SidebarSkeleton />
-        ) : conversations.length === 0 ? (
+        ) : visible.length === 0 ? (
           <div className="conv-empty">
             <MessageCircle size={40} strokeWidth={1.5} />
-            <h3>No conversations yet</h3>
+            <h3>{showArchived ? 'No archived chats' : 'No conversations yet'}</h3>
             <p>Start a private chat or create a group</p>
-            <button className="btn-primary sm" onClick={onNewChat}>Start Chatting</button>
+            {!showArchived && (
+              <button className="btn-primary sm" onClick={onNewChat}>Start Chatting</button>
+            )}
           </div>
         ) : (
-          conversations.map((conv) => (
+          visible.map((conv) => (
             <ConversationItem
               key={conv.id}
               conv={conv}
@@ -70,13 +75,19 @@ export default function ConversationSidebar({
         )}
       </div>
 
-      <div className="sidebar-user">
-        <Avatar name={user.displayName} color={user.avatarColor} size={32} online />
+      <button type="button" className="sidebar-user" onClick={onProfile}>
+        <Avatar
+          name={user.displayName}
+          color={user.avatarColor}
+          avatarUrl={user.avatarUrl}
+          size={32}
+          online
+        />
         <div className="sidebar-user-info">
           <span className="sidebar-user-name">{user.displayName}</span>
           <span className="sidebar-user-handle">@{user.username}</span>
         </div>
-      </div>
+      </button>
     </aside>
   );
 }
@@ -89,7 +100,13 @@ function ConversationItem({ conv, active, onClick, userId, isOnline }) {
   return (
     <button className={`conv-item ${active ? 'active' : ''}`} onClick={onClick}>
       {isPrivate && other ? (
-        <Avatar name={other.displayName} color={other.avatarColor} size={44} online={isOnline} />
+        <Avatar
+          name={other.displayName}
+          color={other.avatarColor}
+          avatarUrl={other.avatarUrl || conv.avatarUrl}
+          size={44}
+          online={isOnline}
+        />
       ) : (
         <Avatar
           name={conv.displayName || conv.name}
@@ -101,8 +118,11 @@ function ConversationItem({ conv, active, onClick, userId, isOnline }) {
       <div className="conv-item-body">
         <div className="conv-item-top">
           <span className="conv-item-name">
+            {conv.pinned && <Pin size={12} className="conv-pin" />}
             {conv.displayName || conv.name}
             {isGroup && <span className="group-tag">Group</span>}
+            {conv.muted && <VolumeX size={12} className="conv-muted" />}
+            {conv.archived && <Archive size={12} className="conv-archived" />}
           </span>
           {conv.lastMessageAt && (
             <span className="conv-item-time">{formatTime(conv.lastMessageAt)}</span>
@@ -112,7 +132,7 @@ function ConversationItem({ conv, active, onClick, userId, isOnline }) {
           <span className="conv-item-preview">
             {conv.lastMessage || 'No messages yet'}
           </span>
-          {conv.unreadCount > 0 && (
+          {conv.unreadCount > 0 && !conv.muted && (
             <span className="unread-badge">{conv.unreadCount}</span>
           )}
         </div>

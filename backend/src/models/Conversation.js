@@ -5,6 +5,9 @@ const memberSchema = new mongoose.Schema(
     userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
     joinedAt: { type: Date, default: Date.now },
     lastReadAt: { type: Date },
+    archived: { type: Boolean, default: false },
+    muted: { type: Boolean, default: false },
+    pinned: { type: Boolean, default: false },
   },
   { _id: false }
 );

@@ -16,6 +16,7 @@ import { setupChatSocket } from './sockets/chatSocket.js';
 import { socketAuthenticate } from './middleware/auth.js';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler.js';
 import { apiLimiter } from './middleware/rateLimiter.js';
+import { requestLogger } from './middleware/logger.js';
 
 dotenv.config();
 
@@ -53,6 +54,7 @@ const io = new Server(httpServer, {
 app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
 app.use(cors(corsOptions));
 app.use(express.json({ limit: '1mb' }));
+app.use(requestLogger);
 const uploadDir = process.env.UPLOAD_DIR || path.join(__dirname, '../uploads');
 app.use('/uploads', express.static(uploadDir));
 app.use('/api', apiLimiter);

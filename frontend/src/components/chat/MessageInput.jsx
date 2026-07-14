@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { Send, Smile, ImagePlus, X } from 'lucide-react';
+import { Send, Smile, ImagePlus, Paperclip, Mic, Square, X } from 'lucide-react';
 import EmojiPicker from './EmojiPicker';
 import { api } from '../../services/api';
 import { useToast } from '../../context/ToastContext';
@@ -15,9 +15,13 @@ export default function MessageInput({
   const [text, setText] = useState('');
   const [showEmoji, setShowEmoji] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [recording, setRecording] = useState(false);
   const typingRef = useRef(null);
   const isTyping = useRef(false);
+  const imageRef = useRef(null);
   const fileRef = useRef(null);
+  const mediaRecorderRef = useRef(null);
+  const chunksRef = useRef([]);
   const { addToast } = useToast();
 
   const handleTyping = () => {
@@ -48,27 +52,74 @@ export default function MessageInput({
     submit({ content: trimmed, replyTo: replyTo?.id });
   };
 
-  const handleImage = async (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    if (file.size > 5 * 1024 * 1024) {
-      addToast('Image must be under 5MB', 'error');
+  const uploadAndSend = async (file) => {
+    if (file.size > 10 * 1024 * 1024) {
+      addToast('File must be under 10MB', 'error');
       return;
     }
-
     setUploading(true);
     try {
-      const { imageUrl } = await api.uploadImage(file);
-      submit({ content: text.trim(), type: 'image', imageUrl, replyTo: replyTo?.id });
+      const data = await api.uploadFile(file);
+      submit({
+        content: text.trim(),
+        type: data.type,
+        imageUrl: data.imageUrl,
+        fileUrl: data.fileUrl || data.url,
+        fileName: data.fileName,
+        fileSize: data.fileSize,
+        replyTo: replyTo?.id,
+      });
     } catch (err) {
       addToast(err.message, 'error');
     } finally {
       setUploading(false);
-      if (fileRef.current) fileRef.current.value = '';
     }
   };
 
-  useEffect(() => () => clearTimeout(typingRef.current), []);
+  const handleImage = async (e) => {
+    const file = e.target.files?.[0];
+    if (file) await uploadAndSend(file);
+    if (imageRef.current) imageRef.current.value = '';
+  };
+
+  const handleFile = async (e) => {
+    const file = e.target.files?.[0];
+    if (file) await uploadAndSend(file);
+    if (fileRef.current) fileRef.current.value = '';
+  };
+
+  const toggleRecording = async () => {
+    if (recording) {
+      mediaRecorderRef.current?.stop();
+      setRecording(false);
+      return;
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const recorder = new MediaRecorder(stream);
+      chunksRef.current = [];
+      recorder.ondataavailable = (ev) => {
+        if (ev.data.size > 0) chunksRef.current.push(ev.data);
+      };
+      recorder.onstop = async () => {
+        stream.getTracks().forEach((t) => t.stop());
+        const blob = new Blob(chunksRef.current, { type: 'audio/webm' });
+        const file = new File([blob], `voice-${Date.now()}.webm`, { type: 'audio/webm' });
+        await uploadAndSend(file);
+      };
+      mediaRecorderRef.current = recorder;
+      recorder.start();
+      setRecording(true);
+    } catch {
+      addToast('Microphone access denied', 'error');
+    }
+  };
+
+  useEffect(() => () => {
+    clearTimeout(typingRef.current);
+    mediaRecorderRef.current?.stop();
+  }, []);
 
   return (
     <div className="msg-input-area">
@@ -85,28 +136,57 @@ export default function MessageInput({
       )}
 
       <form className="msg-input-form" onSubmit={handleSubmit}>
-        <input ref={fileRef} type="file" accept="image/*" hidden onChange={handleImage} />
+        <input ref={imageRef} type="file" accept="image/*" hidden onChange={handleImage} />
+        <input
+          ref={fileRef}
+          type="file"
+          accept=".pdf,.doc,.docx,.txt,.xls,.xlsx,.ppt,.pptx,.zip"
+          hidden
+          onChange={handleFile}
+        />
 
         <button
           type="button"
           className="icon-btn"
-          onClick={() => fileRef.current?.click()}
+          onClick={() => imageRef.current?.click()}
           disabled={disabled || uploading}
           title="Upload image"
         >
           <ImagePlus size={20} />
         </button>
+        <button
+          type="button"
+          className="icon-btn"
+          onClick={() => fileRef.current?.click()}
+          disabled={disabled || uploading}
+          title="Upload document"
+        >
+          <Paperclip size={20} />
+        </button>
+        <button
+          type="button"
+          className={`icon-btn ${recording ? 'recording' : ''}`}
+          onClick={toggleRecording}
+          disabled={disabled || uploading}
+          title={recording ? 'Stop recording' : 'Voice note'}
+        >
+          {recording ? <Square size={18} /> : <Mic size={20} />}
+        </button>
 
         <div className="msg-input-wrap">
           <input
             type="text"
-            placeholder={uploading ? 'Uploading...' : 'Type a message...'}
+            placeholder={
+              recording ? 'Recording…'
+                : uploading ? 'Uploading...'
+                  : 'Type a message...'
+            }
             value={text}
             onChange={(e) => { setText(e.target.value); handleTyping(); }}
             onKeyDown={(e) => {
               if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSubmit(e); }
             }}
-            disabled={disabled || uploading}
+            disabled={disabled || uploading || recording}
             maxLength={2000}
           />
 
@@ -130,7 +210,7 @@ export default function MessageInput({
         <button
           type="submit"
           className="send-btn"
-          disabled={!text.trim() || disabled || uploading}
+          disabled={!text.trim() || disabled || uploading || recording}
         >
           <Send size={18} />
         </button>

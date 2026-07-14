@@ -8,6 +8,8 @@ import {
   markMessagesAsRead,
   searchMessages,
   isRoomMember,
+  toggleReaction,
+  toggleStarMessage,
 } from '../db/services.js';
 
 const router = Router();
@@ -46,12 +48,12 @@ router.get('/:roomId', async (req, res, next) => {
 router.post('/:roomId', async (req, res, next) => {
   try {
     const { roomId } = req.params;
-    const { content, type, imageUrl, replyTo } = req.body;
+    const { content, type, imageUrl, fileUrl, fileName, fileSize, replyTo } = req.body;
 
     if (!(await isRoomMember(roomId, req.user.id))) {
       return res.status(403).json({ success: false, error: 'Not a member of this conversation' });
     }
-    if (!content?.trim() && !imageUrl) {
+    if (!content?.trim() && !imageUrl && !fileUrl) {
       return res.status(400).json({ success: false, error: 'Message content is required' });
     }
 
@@ -61,6 +63,9 @@ router.post('/:roomId', async (req, res, next) => {
       content: content?.trim() || '',
       type: type || 'text',
       imageUrl,
+      fileUrl,
+      fileName,
+      fileSize,
       replyTo,
     });
 
@@ -89,10 +94,33 @@ router.put('/:messageId', async (req, res, next) => {
 
 router.delete('/:messageId', async (req, res, next) => {
   try {
-    const message = await deleteMessage(req.params.messageId, req.user.id);
+    const scope = req.query.scope === 'me' ? 'me' : 'everyone';
+    const message = await deleteMessage(req.params.messageId, req.user.id, scope);
     if (!message) {
       return res.status(403).json({ success: false, error: 'Cannot delete this message' });
     }
+    res.json({ success: true, data: message });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post('/:messageId/react', async (req, res, next) => {
+  try {
+    const { emoji } = req.body;
+    if (!emoji) return res.status(400).json({ success: false, error: 'Emoji required' });
+    const message = await toggleReaction(req.params.messageId, req.user.id, emoji);
+    if (!message) return res.status(404).json({ success: false, error: 'Message not found' });
+    res.json({ success: true, data: message });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post('/:messageId/star', async (req, res, next) => {
+  try {
+    const message = await toggleStarMessage(req.params.messageId, req.user.id);
+    if (!message) return res.status(404).json({ success: false, error: 'Message not found' });
     res.json({ success: true, data: message });
   } catch (error) {
     next(error);

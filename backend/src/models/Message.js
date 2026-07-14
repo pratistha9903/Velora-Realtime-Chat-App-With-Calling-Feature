@@ -8,16 +8,30 @@ const readSchema = new mongoose.Schema(
   { _id: false }
 );
 
+const reactionSchema = new mongoose.Schema(
+  {
+    emoji: { type: String, required: true },
+    userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  },
+  { _id: false }
+);
+
 const messageSchema = new mongoose.Schema(
   {
     conversationId: { type: mongoose.Schema.Types.ObjectId, ref: 'Conversation', required: true, index: true },
     userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
     content: { type: String, default: '' },
-    type: { type: String, enum: ['text', 'image'], default: 'text' },
+    type: { type: String, enum: ['text', 'image', 'file', 'audio'], default: 'text' },
     imageUrl: { type: String },
+    fileUrl: { type: String },
+    fileName: { type: String },
+    fileSize: { type: Number },
     replyTo: { type: mongoose.Schema.Types.ObjectId, ref: 'Message' },
     deliveredTo: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
     readBy: [readSchema],
+    reactions: [reactionSchema],
+    hiddenFor: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
+    starredBy: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
     editedAt: { type: Date },
     deletedAt: { type: Date },
   },
