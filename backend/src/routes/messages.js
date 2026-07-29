@@ -8,6 +8,7 @@ import {
   markMessagesAsRead,
   searchMessages,
   isRoomMember,
+  canSendInConversation,
   toggleReaction,
   toggleStarMessage,
 } from '../db/services.js';
@@ -50,8 +51,8 @@ router.post('/:roomId', async (req, res, next) => {
     const { roomId } = req.params;
     const { content, type, imageUrl, fileUrl, fileName, fileSize, replyTo } = req.body;
 
-    if (!(await isRoomMember(roomId, req.user.id))) {
-      return res.status(403).json({ success: false, error: 'Not a member of this conversation' });
+    if (!(await canSendInConversation(roomId, req.user.id))) {
+      return res.status(403).json({ success: false, error: 'You cannot send messages in this chat' });
     }
     if (!content?.trim() && !imageUrl && !fileUrl) {
       return res.status(400).json({ success: false, error: 'Message content is required' });

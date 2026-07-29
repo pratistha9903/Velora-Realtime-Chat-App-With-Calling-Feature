@@ -4,6 +4,7 @@ import { getSocketUrl } from '../services/api';
 
 export function useSocket(token, user, onAuthError) {
   const socketRef = useRef(null);
+  const handlersRef = useRef(new Map());
   const [connected, setConnected] = useState(false);
   const [onlineUsers, setOnlineUsers] = useState([]);
   const [typingInRoom, setTypingInRoom] = useState({});
@@ -24,11 +25,27 @@ export function useSocket(token, user, onAuthError) {
       auth: { token },
       transports: ['websocket', 'polling'],
       reconnection: true,
-      reconnectionAttempts: 5,
+      reconnectionAttempts: 8,
       reconnectionDelay: 1000,
     });
 
     socketRef.current = socket;
+
+    const dispatch = (event, payload) => {
+      const set = handlersRef.current.get(event);
+      if (!set) return;
+      for (const handler of set) {
+        try {
+          handler(payload);
+        } catch (err) {
+          console.error(`Socket handler error (${event}):`, err);
+        }
+      }
+    };
+
+    socket.onAny((event, payload) => {
+      dispatch(event, payload);
+    });
 
     socket.on('connect', () => setConnected(true));
     socket.on('disconnect', () => setConnected(false));
@@ -66,6 +83,7 @@ export function useSocket(token, user, onAuthError) {
     });
 
     return () => {
+      socket.offAny();
       socket.disconnect();
       socketRef.current = null;
       setConnected(false);
@@ -112,10 +130,15 @@ export function useSocket(token, user, onAuthError) {
     socketRef.current?.emit('typing:stop', { roomId });
   }, []);
 
+  // Stable subscription API — works even if handlers register before connect
   const on = useCallback((event, handler) => {
-    if (!socketRef.current) return () => {};
-    socketRef.current.on(event, handler);
-    return () => socketRef.current?.off(event, handler);
+    if (!handlersRef.current.has(event)) handlersRef.current.set(event, new Set());
+    handlersRef.current.get(event).add(handler);
+    return () => handlersRef.current.get(event)?.delete(handler);
+  }, []);
+
+  const emit = useCallback((event, data) => {
+    socketRef.current?.emit(event, data);
   }, []);
 
   return {
@@ -133,5 +156,6 @@ export function useSocket(token, user, onAuthError) {
     startTyping,
     stopTyping,
     on,
+    emit,
   };
 }

@@ -11,6 +11,8 @@ export default function MessageInput({
   disabled,
   replyTo,
   onCancelReply,
+  blocked = false,
+  blockedMessage = 'You cannot send messages in this chat',
 }) {
   const [text, setText] = useState('');
   const [showEmoji, setShowEmoji] = useState(false);
@@ -123,6 +125,12 @@ export default function MessageInput({
 
   return (
     <div className="msg-input-area">
+      {blocked ? (
+        <div className="msg-blocked-banner">
+          <p>{blockedMessage}</p>
+        </div>
+      ) : (
+        <>
       {replyTo && (
         <div className="reply-bar">
           <div>
@@ -215,6 +223,8 @@ export default function MessageInput({
           <Send size={18} />
         </button>
       </form>
+        </>
+      )}
     </div>
   );
 }

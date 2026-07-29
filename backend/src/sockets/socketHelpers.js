@@ -7,23 +7,25 @@ import {
 const userSockets = new Map();
 
 export function registerUserSocket(userId, socketId) {
-  if (!userSockets.has(userId)) userSockets.set(userId, new Set());
-  userSockets.get(userId).add(socketId);
+  const id = String(userId);
+  if (!userSockets.has(id)) userSockets.set(id, new Set());
+  userSockets.get(id).add(socketId);
 }
 
 export function unregisterUserSocket(userId, socketId) {
-  const sockets = userSockets.get(userId);
+  const id = String(userId);
+  const sockets = userSockets.get(id);
   if (!sockets) return false;
   sockets.delete(socketId);
   if (sockets.size === 0) {
-    userSockets.delete(userId);
+    userSockets.delete(id);
     return true;
   }
   return false;
 }
 
 export function getUserSocketIds(userId) {
-  return userSockets.get(userId) || new Set();
+  return userSockets.get(String(userId)) || new Set();
 }
 
 export function emitToUser(io, userId, event, data) {

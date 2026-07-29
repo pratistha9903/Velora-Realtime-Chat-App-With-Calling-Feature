@@ -7,7 +7,15 @@ import { randomUUID } from 'crypto';
 import { authenticate } from '../middleware/auth.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const uploadDir = process.env.UPLOAD_DIR || path.join(__dirname, '../../uploads');
+
+function resolveUploadDir() {
+  const configured = process.env.UPLOAD_DIR;
+  if (configured && path.isAbsolute(configured)) return configured;
+  if (configured) return path.resolve(process.cwd(), configured);
+  return path.resolve(__dirname, '../../uploads');
+}
+
+const uploadDir = resolveUploadDir();
 const maxSize = parseInt(process.env.MAX_FILE_SIZE || '10485760', 10);
 
 if (!fs.existsSync(uploadDir)) {
@@ -29,7 +37,7 @@ const AUDIO_EXTS = ['.webm', '.ogg', '.mp3', '.wav', '.m4a'];
 const fileFilter = (req, file, cb) => {
   const ext = path.extname(file.originalname).toLowerCase();
   const all = [...IMAGE_EXTS, ...DOC_EXTS, ...AUDIO_EXTS];
-  if (all.includes(ext) || file.mimetype?.startsWith('audio/')) {
+  if (all.includes(ext) || file.mimetype?.startsWith('audio/') || file.mimetype?.startsWith('image/')) {
     cb(null, true);
   } else {
     cb(new Error('Unsupported file type. Allowed: images, PDF/docs, audio'));
@@ -59,6 +67,14 @@ async function maybeCloudinary(filePath, originalName) {
   }
 }
 
+function publicBaseUrl(req) {
+  const configured = process.env.PUBLIC_URL || process.env.API_PUBLIC_URL;
+  if (configured) return configured.replace(/\/$/, '');
+  const proto = req.headers['x-forwarded-proto'] || req.protocol || 'http';
+  const host = req.headers['x-forwarded-host'] || req.get('host');
+  return `${proto}://${host}`;
+}
+
 async function handleUpload(req, res, next) {
   try {
     if (!req.file) {
@@ -67,18 +83,19 @@ async function handleUpload(req, res, next) {
 
     const ext = path.extname(req.file.originalname).toLowerCase();
     let type = 'file';
-    if (IMAGE_EXTS.includes(ext)) type = 'image';
+    if (IMAGE_EXTS.includes(ext) || req.file.mimetype?.startsWith('image/')) type = 'image';
     else if (AUDIO_EXTS.includes(ext) || req.file.mimetype?.startsWith('audio/')) type = 'audio';
 
     const cloudUrl = await maybeCloudinary(req.file.path, req.file.originalname);
-    const url = cloudUrl || `/uploads/${req.file.filename}`;
+    const relativeUrl = `/uploads/${req.file.filename}`;
+    const absoluteUrl = cloudUrl || `${publicBaseUrl(req)}${relativeUrl}`;
 
     res.json({
       success: true,
       data: {
-        url,
-        imageUrl: type === 'image' ? url : undefined,
-        fileUrl: url,
+        url: absoluteUrl,
+        imageUrl: type === 'image' ? absoluteUrl : undefined,
+        fileUrl: absoluteUrl,
         fileName: req.file.originalname,
         fileSize: req.file.size,
         type,
@@ -102,5 +119,9 @@ router.post('/', authenticate, (req, res, next) => {
     return handleUpload(req, res, next);
   });
 });
+
+export function getUploadDir() {
+  return uploadDir;
+}
 
 export default router;

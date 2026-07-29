@@ -109,6 +109,8 @@ export const api = {
     request('/api/auth/google', { method: 'POST', body: JSON.stringify(body) }),
   forgotPassword: (email) =>
     request('/api/auth/forgot-password', { method: 'POST', body: JSON.stringify({ email }) }),
+  verifyResetToken: (token) =>
+    request(`/api/auth/verify-reset-token?token=${encodeURIComponent(token)}`),
   resetPassword: (body) =>
     request('/api/auth/reset-password', { method: 'POST', body: JSON.stringify(body) }),
   verifyEmail: (token) =>
@@ -123,6 +125,17 @@ export const api = {
   createDm: (userId) => request(`/api/rooms/dm/${userId}`, { method: 'POST' }),
   updateRoomPrefs: (id, prefs) =>
     request(`/api/rooms/${id}/prefs`, { method: 'PATCH', body: JSON.stringify(prefs) }),
+  addRoomMembers: (id, memberIds) =>
+    request(`/api/rooms/${id}/members`, { method: 'POST', body: JSON.stringify({ memberIds }) }),
+  removeRoomMember: (id, userId) =>
+    request(`/api/rooms/${id}/members/${userId}`, { method: 'DELETE' }),
+  deleteRoom: (id) => request(`/api/rooms/${id}`, { method: 'DELETE' }),
+  getCallHistory: () => request('/api/rooms/calls/history'),
+  setRoomMemberRole: (id, userId, role) =>
+    request(`/api/rooms/${id}/members/${userId}/role`, {
+      method: 'PATCH',
+      body: JSON.stringify({ role }),
+    }),
   getRoomMembers: (id) => request(`/api/rooms/${id}/members`),
   getUsers: () => request('/api/rooms/users'),
   searchUsers: (q) => request(`/api/rooms/users/search?q=${encodeURIComponent(q)}`),

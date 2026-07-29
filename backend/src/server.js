@@ -11,12 +11,13 @@ import connectDB from './db/connect.js';
 import authRouter from './routes/auth.js';
 import roomsRouter from './routes/rooms.js';
 import messagesRouter from './routes/messages.js';
-import uploadRouter from './routes/upload.js';
+import uploadRouter, { getUploadDir } from './routes/upload.js';
 import { setupChatSocket } from './sockets/chatSocket.js';
 import { socketAuthenticate } from './middleware/auth.js';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler.js';
 import { apiLimiter } from './middleware/rateLimiter.js';
 import { requestLogger } from './middleware/logger.js';
+import { isEmailConfigured, verifySmtpConnection } from './utils/mailer.js';
 
 dotenv.config();
 
@@ -55,8 +56,14 @@ app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
 app.use(cors(corsOptions));
 app.use(express.json({ limit: '1mb' }));
 app.use(requestLogger);
-const uploadDir = process.env.UPLOAD_DIR || path.join(__dirname, '../uploads');
-app.use('/uploads', express.static(uploadDir));
+const uploadDir = getUploadDir();
+app.use('/uploads', express.static(uploadDir, {
+  setHeaders(res) {
+    res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+    res.setHeader('Cache-Control', 'public, max-age=31536000');
+  },
+}));
+console.log(`Serving uploads from: ${uploadDir}`);
 app.use('/api', apiLimiter);
 
 app.get('/api/health', (req, res) => {
@@ -96,9 +103,20 @@ app.set('io', io);
 async function start() {
   try {
     await connectDB();
-    httpServer.listen(PORT, () => {
+    httpServer.listen(PORT, async () => {
       console.log(`Server running on http://localhost:${PORT}`);
       console.log(`Socket.io ready — CORS origin: ${CLIENT_URL}`);
+      if (isEmailConfigured()) {
+        try {
+          await verifySmtpConnection();
+          console.log('[email] SMTP connection verified — reset emails will be sent');
+        } catch (err) {
+          console.error('[email] SMTP connection FAILED:', err.message);
+          console.error('[email] Fix SMTP_USER / SMTP_PASS in backend/.env (no spaces), then restart');
+        }
+      } else {
+        console.warn('[email] SMTP not configured — forgot-password uses demo links only');
+      }
     });
   } catch (error) {
     console.error('Failed to start server:', error.message);

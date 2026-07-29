@@ -1,7 +1,9 @@
-import { MessageCircle, Search, Bell, Users, UserPlus, Pin, VolumeX, Archive } from 'lucide-react';
+import { MessageCircle, Search, Bell, Users, UserPlus, Pin, VolumeX, Archive, Phone } from 'lucide-react';
 import { format, parseISO, isToday, isYesterday } from 'date-fns';
 import Avatar from '../ui/Avatar';
 import { SidebarSkeleton } from '../ui/Skeleton';
+import CallsPanel from './CallsPanel';
+import { useContactNicknames } from '../../hooks/useContactNicknames';
 
 function formatTime(dateStr) {
   if (!dateStr) return '';
@@ -20,12 +22,18 @@ export default function ConversationSidebar({
   onSearch,
   onNotifications,
   onProfile,
+  onContactClick,
   notificationCount,
   user,
   loading,
   onlineUsers,
+  sidebarView = 'chats',
+  onSidebarViewChange,
   showArchived = false,
+  callHistoryTick = 0,
+  onSocket,
 }) {
+  const { labelFor } = useContactNicknames();
   const onlineIds = new Set(onlineUsers.map((u) => u.id));
   const visible = conversations.filter((c) => (showArchived ? c.archived : !c.archived));
 
@@ -47,33 +55,66 @@ export default function ConversationSidebar({
         </div>
       </div>
 
-      <div className="conv-list">
-        {loading ? (
-          <SidebarSkeleton />
-        ) : visible.length === 0 ? (
-          <div className="conv-empty">
-            <MessageCircle size={40} strokeWidth={1.5} />
-            <h3>{showArchived ? 'No archived chats' : 'No conversations yet'}</h3>
-            <p>Start a private chat or create a group</p>
-            {!showArchived && (
-              <button className="btn-primary sm" onClick={onNewChat}>Start Chatting</button>
-            )}
-          </div>
-        ) : (
-          visible.map((conv) => (
-            <ConversationItem
-              key={conv.id}
-              conv={conv}
-              active={conv.id === activeId}
-              onClick={() => onSelect(conv)}
-              userId={user.id}
-              isOnline={conv.type === 'dm' && conv.members?.some(
-                (m) => m.id !== user.id && onlineIds.has(m.id)
-              )}
-            />
-          ))
-        )}
+      <div className="sidebar-tabs">
+        <button
+          type="button"
+          className={`sidebar-tab ${sidebarView === 'chats' ? 'active' : ''}`}
+          onClick={() => onSidebarViewChange?.('chats')}
+        >
+          <MessageCircle size={15} />
+          Chats
+        </button>
+        <button
+          type="button"
+          className={`sidebar-tab ${sidebarView === 'calls' ? 'active' : ''}`}
+          onClick={() => onSidebarViewChange?.('calls')}
+        >
+          <Phone size={15} />
+          Calls
+        </button>
       </div>
+
+      {sidebarView === 'calls' ? (
+        <CallsPanel
+          onlineUsers={onlineUsers}
+          callHistoryTick={callHistoryTick}
+          onSocket={onSocket}
+          onSelectCall={(call) => {
+            const room = conversations.find((r) => r.id === call.roomId);
+            if (room) onSelect(room);
+          }}
+        />
+      ) : (
+        <div className="conv-list">
+          {loading ? (
+            <SidebarSkeleton />
+          ) : visible.length === 0 ? (
+            <div className="conv-empty">
+              <MessageCircle size={40} strokeWidth={1.5} />
+              <h3>{showArchived ? 'No archived chats' : 'No conversations yet'}</h3>
+              <p>Start a private chat or create a group</p>
+              {!showArchived && (
+                <button className="btn-primary sm" onClick={onNewChat}>Start Chatting</button>
+              )}
+            </div>
+          ) : (
+            visible.map((conv) => (
+              <ConversationItem
+                key={conv.id}
+                conv={conv}
+                active={conv.id === activeId}
+                onClick={() => onSelect(conv)}
+                onContactClick={onContactClick}
+                userId={user.id}
+                labelFor={labelFor}
+                isOnline={conv.type === 'dm' && conv.members?.some(
+                  (m) => m.id !== user.id && onlineIds.has(m.id)
+                )}
+              />
+            ))
+          )}
+        </div>
+      )}
 
       <button type="button" className="sidebar-user" onClick={onProfile}>
         <Avatar
@@ -92,34 +133,54 @@ export default function ConversationSidebar({
   );
 }
 
-function ConversationItem({ conv, active, onClick, userId, isOnline }) {
+function ConversationItem({
+  conv, active, onClick, onContactClick, userId, labelFor, isOnline,
+}) {
   const isPrivate = conv.type === 'dm';
   const other = isPrivate ? conv.members?.find((m) => m.id !== userId) : null;
   const isGroup = conv.type === 'group';
+  const title = isPrivate && other
+    ? labelFor(other.id, conv.displayName || other.displayName)
+    : (conv.displayName || conv.name);
+
+  const openContact = (e) => {
+    if (!isPrivate || !other) return;
+    e.stopPropagation();
+    onContactClick?.({ peer: other, room: conv });
+  };
 
   return (
-    <button className={`conv-item ${active ? 'active' : ''}`} onClick={onClick}>
-      {isPrivate && other ? (
-        <Avatar
-          name={other.displayName}
-          color={other.avatarColor}
-          avatarUrl={other.avatarUrl || conv.avatarUrl}
-          size={44}
-          online={isOnline}
-        />
-      ) : (
-        <Avatar
-          name={conv.displayName || conv.name}
-          color={conv.avatarColor || '#6366f1'}
-          size={44}
-        />
-      )}
+    <div className={`conv-item ${active ? 'active' : ''}`}>
+      <button type="button" className="conv-avatar-btn" onClick={openContact} title="Contact info">
+        {isPrivate && other ? (
+          <Avatar
+            name={other.displayName}
+            color={other.avatarColor}
+            avatarUrl={other.avatarUrl || conv.avatarUrl}
+            size={44}
+            online={isOnline}
+          />
+        ) : (
+          <Avatar
+            name={conv.displayName || conv.name}
+            color={conv.avatarColor || '#6366f1'}
+            size={44}
+          />
+        )}
+      </button>
 
-      <div className="conv-item-body">
+      <button type="button" className="conv-item-body" onClick={onClick}>
         <div className="conv-item-top">
-          <span className="conv-item-name">
+          <span
+            className={`conv-item-name ${isPrivate ? 'clickable-name' : ''}`}
+            onClick={isPrivate ? openContact : undefined}
+            role={isPrivate ? 'button' : undefined}
+            tabIndex={isPrivate ? 0 : undefined}
+            onKeyDown={isPrivate ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openContact(e); } } : undefined}
+            title={isPrivate ? 'Contact info' : undefined}
+          >
             {conv.pinned && <Pin size={12} className="conv-pin" />}
-            {conv.displayName || conv.name}
+            {title}
             {isGroup && <span className="group-tag">Group</span>}
             {conv.muted && <VolumeX size={12} className="conv-muted" />}
             {conv.archived && <Archive size={12} className="conv-archived" />}
@@ -136,7 +197,7 @@ function ConversationItem({ conv, active, onClick, userId, isOnline }) {
             <span className="unread-badge">{conv.unreadCount}</span>
           )}
         </div>
-      </div>
-    </button>
+      </button>
+    </div>
   );
 }

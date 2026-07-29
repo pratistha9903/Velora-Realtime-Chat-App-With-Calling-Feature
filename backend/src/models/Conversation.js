@@ -3,11 +3,15 @@ import mongoose from 'mongoose';
 const memberSchema = new mongoose.Schema(
   {
     userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+    role: { type: String, enum: ['admin', 'member'], default: 'member' },
     joinedAt: { type: Date, default: Date.now },
     lastReadAt: { type: Date },
     archived: { type: Boolean, default: false },
     muted: { type: Boolean, default: false },
     pinned: { type: Boolean, default: false },
+    removedAt: { type: Date, default: null },
+    removedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+    deletedAt: { type: Date, default: null },
   },
   { _id: false }
 );

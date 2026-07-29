@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import {
-  Check, CheckCheck, MoreHorizontal, Pencil, Trash2, Reply, Copy, Star, Smile,
+  Check, CheckCheck, MoreHorizontal, Pencil, Trash2, Reply, Copy, Star, Smile, FileText, X,
 } from 'lucide-react';
 import Avatar from '../ui/Avatar';
 import { formatMessageTime } from './DateSeparator';
@@ -17,18 +17,44 @@ function MessageStatus({ status }) {
 
 function mediaUrl(url) {
   if (!url) return '';
-  if (url.startsWith('http')) return url;
-  return `${getApiUrl()}${url}`;
+  if (url.startsWith('http://') || url.startsWith('https://') || url.startsWith('blob:')) return url;
+  const base = getApiUrl().replace(/\/$/, '');
+  return `${base}${url.startsWith('/') ? url : `/${url}`}`;
+}
+
+function formatBytes(size) {
+  if (!size) return '';
+  if (size < 1024) return `${size} B`;
+  if (size < 1024 * 1024) return `${Math.round(size / 1024)} KB`;
+  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 export default function MessageBubble({
-  message, isOwn, showAvatar, onReply, onEdit, onDelete, onReact, onStar,
+  message, isOwn, showAvatar, onReply, onEdit, onDelete, onReact, onStar, currentUserId,
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [reactOpen, setReactOpen] = useState(false);
   const [editing, setEditing] = useState(false);
   const [editText, setEditText] = useState(message.content || '');
+  const [lightbox, setLightbox] = useState(null);
   const { addToast } = useToast();
+
+  if (message.type === 'system') {
+    let text = message.content || '';
+    if (
+      message.meta?.kind === 'member_removed'
+      && message.meta?.targetUserId === currentUserId
+    ) {
+      text = `${message.meta.actorName || 'Someone'} has removed you`;
+    }
+    const isMissed = message.meta?.kind === 'missed_call';
+    const isCompleted = message.meta?.kind === 'call_completed';
+    return (
+      <div className={`msg-system ${isMissed ? 'missed-call' : ''} ${isCompleted ? 'call-completed' : ''}`}>
+        <span>{isMissed ? `📞 ${text}` : isCompleted ? `📞 ${text}` : text}</span>
+      </div>
+    );
+  }
 
   if (message.deletedAt) {
     return (
@@ -40,6 +66,12 @@ export default function MessageBubble({
     );
   }
 
+  const imageSrc = message.type === 'image'
+    ? mediaUrl(message.imageUrl || message.fileUrl)
+    : null;
+  const fileSrc = mediaUrl(message.fileUrl || message.imageUrl);
+  const audioSrc = message.type === 'audio' ? fileSrc : null;
+
   const handleEdit = () => {
     if (editText.trim() && editText !== message.content) {
       onEdit(message.id, editText.trim());
@@ -49,7 +81,7 @@ export default function MessageBubble({
   };
 
   const copyMessage = async () => {
-    const text = message.content || message.fileName || message.imageUrl || '';
+    const text = message.content || message.fileName || imageSrc || fileSrc || '';
     try {
       await navigator.clipboard.writeText(text);
       addToast('Copied to clipboard', 'success');
@@ -104,27 +136,36 @@ export default function MessageBubble({
           </div>
         ) : (
           <div className={`msg-bubble ${isOwn ? 'bubble-own' : 'bubble-other'} ${message.starred ? 'starred' : ''}`}>
-            {message.type === 'image' && message.imageUrl && (
-              <img
-                src={mediaUrl(message.imageUrl)}
-                alt="Shared"
-                className="msg-image"
-                loading="lazy"
-              />
+            {imageSrc && (
+              <button type="button" className="msg-image-btn" onClick={() => setLightbox(imageSrc)}>
+                <img
+                  src={imageSrc}
+                  alt="Shared"
+                  className="msg-image"
+                  loading="lazy"
+                  onError={(e) => {
+                    e.currentTarget.classList.add('broken');
+                    e.currentTarget.alt = 'Image failed to load';
+                  }}
+                />
+              </button>
             )}
-            {message.type === 'file' && (
-              <a
-                className="msg-file"
-                href={mediaUrl(message.fileUrl)}
-                target="_blank"
-                rel="noreferrer"
-              >
-                📎 {message.fileName || 'Document'}
-                {message.fileSize ? ` (${Math.round(message.fileSize / 1024)} KB)` : ''}
+            {message.type === 'file' && fileSrc && (
+              <a className="msg-file-card" href={fileSrc} target="_blank" rel="noreferrer">
+                <FileText size={22} />
+                <div>
+                  <strong>{message.fileName || 'Document'}</strong>
+                  <span>{formatBytes(message.fileSize) || 'Open file'}</span>
+                </div>
               </a>
             )}
-            {message.type === 'audio' && (
-              <audio controls className="msg-audio" src={mediaUrl(message.fileUrl || message.imageUrl)} />
+            {audioSrc && (
+              <div className="msg-audio-wrap">
+                <span className="msg-audio-label">Voice note</span>
+                <audio controls preload="metadata" className="msg-audio" src={audioSrc}>
+                  <a href={audioSrc}>Download audio</a>
+                </audio>
+              </div>
             )}
             {message.content && <p>{message.content}</p>}
             {message.starred && <Star size={12} className="msg-star-icon" />}
@@ -199,6 +240,15 @@ export default function MessageBubble({
               )}
             </div>
           )}
+        </div>
+      )}
+
+      {lightbox && (
+        <div className="media-lightbox" onClick={() => setLightbox(null)}>
+          <button type="button" className="lightbox-close" onClick={() => setLightbox(null)}>
+            <X size={20} />
+          </button>
+          <img src={lightbox} alt="Full size" onClick={(e) => e.stopPropagation()} />
         </div>
       )}
     </div>

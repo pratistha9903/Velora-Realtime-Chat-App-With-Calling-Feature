@@ -31,6 +31,9 @@ function formatMember(doc) {
     avatarUrl: u.avatarUrl || null,
     bio: u.bio || '',
     lastSeen: u.lastSeen,
+    role: doc.role || 'member',
+    removedAt: doc.removedAt || null,
+    removedBy: doc.removedBy?.toString?.() || doc.removedBy || null,
   };
 }
 
@@ -84,6 +87,7 @@ export function formatMessage(doc, currentUserId, memberCount = 2) {
     fileUrl: m.deletedAt ? null : m.fileUrl,
     fileName: m.deletedAt ? null : m.fileName,
     fileSize: m.deletedAt ? null : m.fileSize,
+    meta: m.meta || null,
     replyTo: m.replyTo?._id?.toString() || m.replyTo?.toString() || null,
     replyContent: m.replyTo?.content || null,
     replyUsername: m.replyTo?.userId?.username || null,
@@ -137,7 +141,8 @@ async function populateConversation(conv, userId) {
     lastMsg?.type === 'image' ? '📷 Photo'
       : lastMsg?.type === 'file' ? `📎 ${lastMsg.fileName || 'File'}`
         : lastMsg?.type === 'audio' ? '🎤 Voice note'
-          : lastMsg?.content || null;
+          : lastMsg?.type === 'system' ? lastMsg.content
+            : lastMsg?.content || null;
 
   return {
     id: c._id.toString(),
@@ -153,8 +158,11 @@ async function populateConversation(conv, userId) {
     lastMessage: preview,
     lastMessageAt: lastMsg?.createdAt || null,
     unreadCount: unread,
-    memberCount: members.length,
-    members,
+    memberCount: members.filter((m) => !m.removedAt).length,
+    members: members.filter((m) => !m.removedAt || m.id === userId),
+    myRole: (memberEntry?.role === 'admin' || c.createdBy?.toString() === userId) ? 'admin' : 'member',
+    iWasRemoved: !!memberEntry?.removedAt,
+    removedBy: memberEntry?.removedBy?.toString?.() || null,
     archived: !!memberEntry?.archived,
     muted: !!memberEntry?.muted,
     pinned: !!memberEntry?.pinned,
@@ -249,7 +257,11 @@ export async function getAllUsers(excludeUserId) {
 
 export async function createConversation({ name, type, description, createdBy, memberIds = [] }) {
   const uniqueMembers = [...new Set([createdBy, ...memberIds].filter(Boolean))];
-  const members = uniqueMembers.map((id) => ({ userId: id, joinedAt: new Date() }));
+  const members = uniqueMembers.map((id) => ({
+    userId: id,
+    joinedAt: new Date(),
+    role: type === 'group' && id.toString() === createdBy.toString() ? 'admin' : 'member',
+  }));
 
   const conv = await Conversation.create({
     name,
@@ -270,7 +282,14 @@ export async function getOrCreatePrivateChat(userId1, userId2) {
     $expr: { $eq: [{ $size: '$members' }, 2] },
   });
 
-  if (existing) return populateConversation(existing, userId1);
+  if (existing) {
+    const member = existing.members.find((m) => m.userId.toString() === userId1);
+    if (member?.deletedAt) {
+      member.deletedAt = null;
+      await existing.save();
+    }
+    return populateConversation(existing, userId1);
+  }
 
   return createConversation({
     name: null,
@@ -305,7 +324,11 @@ export async function getConversationById(conversationId, userId) {
 
 export async function getUserConversations(userId) {
   const convs = await Conversation.find({ 'members.userId': userId }).sort({ updatedAt: -1 });
-  const populated = await Promise.all(convs.map((c) => populateConversation(c, userId)));
+  const visible = convs.filter((c) => {
+    const member = c.members.find((m) => m.userId.toString() === userId);
+    return member && !member.deletedAt;
+  });
+  const populated = await Promise.all(visible.map((c) => populateConversation(c, userId)));
 
   return populated
     .filter(Boolean)
@@ -315,6 +338,105 @@ export async function getUserConversations(userId) {
       const bT = b.lastMessageAt || b.createdAt;
       return new Date(bT) - new Date(aT);
     });
+}
+
+export async function deleteConversationForUser(conversationId, userId) {
+  const conv = await Conversation.findOne({ _id: conversationId, 'members.userId': userId });
+  if (!conv) return null;
+
+  const member = conv.members.find((m) => m.userId.toString() === userId);
+  if (!member) return null;
+
+  member.deletedAt = new Date();
+  member.archived = false;
+  await conv.save();
+  return { id: conversationId, deleted: true };
+}
+
+export async function restoreConversationForUser(conversationId, userId) {
+  const conv = await Conversation.findOne({ _id: conversationId, 'members.userId': userId });
+  if (!conv) return { restored: false };
+
+  const member = conv.members.find((m) => m.userId.toString() === userId);
+  if (!member?.deletedAt) return { restored: false };
+
+  member.deletedAt = null;
+  await conv.save();
+  const room = await populateConversation(conv, userId);
+  return { restored: true, room };
+}
+
+export async function getCallHistory(userId, limit = 50) {
+  const convs = await Conversation.find({
+    type: 'private',
+    'members.userId': userId,
+  }).select('_id members').lean();
+
+  const roomIds = convs.map((c) => c._id);
+  if (!roomIds.length) return [];
+
+  const uid = userId.toString();
+  const messages = await Message.find({
+    conversationId: { $in: roomIds },
+    type: 'system',
+    'meta.kind': { $in: ['missed_call', 'call_completed'] },
+    $or: [{ 'meta.callerId': uid }, { 'meta.calleeId': uid }],
+  })
+    .sort({ createdAt: -1 })
+    .limit(limit)
+    .lean();
+
+  const peerMap = new Map();
+  for (const c of convs) {
+    const other = c.members.find((m) => m.userId.toString() !== uid);
+    if (other) peerMap.set(c._id.toString(), other.userId.toString());
+  }
+
+  const userIds = [...new Set(messages.flatMap((m) => [
+    m.meta?.callerId,
+    m.meta?.calleeId,
+  ].filter(Boolean)))];
+  const users = await User.find({ _id: { $in: userIds } }).select('displayName username avatarColor avatarUrl').lean();
+  const userById = Object.fromEntries(users.map((u) => [u._id.toString(), u]));
+
+  return messages.map((m) => {
+    const roomId = m.conversationId.toString();
+    const isCaller = m.meta?.callerId === uid;
+    const isCallee = m.meta?.calleeId === uid;
+    const peerId = isCaller ? m.meta?.calleeId : m.meta?.callerId;
+    const peer = userById[peerId] || {};
+    const callType = m.meta?.callType || 'audio';
+
+    let label = m.content;
+    if (m.meta?.kind === 'call_completed') {
+      label = isCaller
+        ? `Outgoing ${callType} call · ${m.meta?.duration || ''}`
+        : `Incoming ${callType} call · ${m.meta?.duration || ''}`;
+    } else if (m.meta?.kind === 'missed_call') {
+      if (isCallee) label = `Missed ${callType} call`;
+      else if (m.meta?.reason === 'declined') label = `${callType} call declined`;
+      else label = `No answer · ${callType} call`;
+    }
+
+    return {
+      id: m._id.toString(),
+      roomId,
+      callType,
+      kind: m.meta?.kind,
+      reason: m.meta?.reason || null,
+      label,
+      duration: m.meta?.duration || null,
+      createdAt: m.createdAt,
+      direction: isCaller ? 'outgoing' : 'incoming',
+      peer: {
+        id: peerId,
+        displayName: peer.displayName || m.meta?.callerName || m.meta?.calleeName || 'User',
+        username: peer.username,
+        avatarColor: peer.avatarColor,
+        avatarUrl: peer.avatarUrl || null,
+      },
+    };
+  });
 }
 
 export async function updateConversationPrefs(conversationId, userId, prefs) {
@@ -331,20 +453,198 @@ export async function updateConversationPrefs(conversationId, userId, prefs) {
   return populateConversation(conv, userId);
 }
 
+function memberIsAdmin(conv, userId) {
+  if (!conv) return false;
+  if (conv.createdBy?.toString() === userId) return true;
+  const member = conv.members.find((m) => {
+    const id = m.userId._id?.toString?.() || m.userId.toString();
+    return id === userId && !m.removedAt;
+  });
+  return member?.role === 'admin';
+}
+
+function memberUserId(m) {
+  return m.userId._id?.toString?.() || m.userId.toString();
+}
+
+export async function addGroupMembers(conversationId, requesterId, memberIds = []) {
+  const conv = await Conversation.findById(conversationId);
+  if (!conv || conv.type !== 'group') return null;
+
+  const requester = conv.members.find((m) => m.userId.toString() === requesterId);
+  if (!requester || requester.removedAt) {
+    throw new Error('Only group members can add people');
+  }
+
+  const added = [];
+  for (const id of memberIds) {
+    if (!id) continue;
+    const existing = conv.members.find((m) => m.userId.toString() === id.toString());
+    if (existing) {
+      if (existing.removedAt) {
+        existing.removedAt = null;
+        existing.removedBy = null;
+        existing.joinedAt = new Date();
+        existing.role = 'member';
+        added.push(id.toString());
+      }
+      continue;
+    }
+    conv.members.push({ userId: id, role: 'member', joinedAt: new Date() });
+    added.push(id.toString());
+  }
+  await conv.save();
+
+  let systemMessage = null;
+  if (added.length) {
+    const actor = await User.findById(requesterId).select('displayName');
+    const actorName = actor?.displayName || 'Someone';
+    systemMessage = await createSystemMessage({
+      roomId: conversationId,
+      userId: requesterId,
+      content: `${actorName} added ${added.length} member${added.length > 1 ? 's' : ''}`,
+      meta: { kind: 'member_added', actorId: requesterId, actorName, addedIds: added },
+    });
+  }
+
+  return {
+    room: await populateConversation(conv, requesterId),
+    addedIds: added,
+    systemMessage,
+  };
+}
+
+export async function removeGroupMember(conversationId, requesterId, targetUserId) {
+  const conv = await Conversation.findById(conversationId).populate('members.userId', 'displayName username');
+  if (!conv || conv.type !== 'group') return null;
+
+  const isSelf = requesterId === targetUserId;
+  if (!isSelf && !memberIsAdmin(conv, requesterId)) {
+    throw new Error('Only group admins can remove members');
+  }
+
+  if (conv.createdBy?.toString() === targetUserId && !isSelf) {
+    throw new Error('Cannot remove the group creator');
+  }
+
+  const target = conv.members.find((m) => m.userId._id?.toString?.() === targetUserId || m.userId.toString() === targetUserId);
+  if (!target || target.removedAt) throw new Error('User is not in this group');
+
+  if (!isSelf && target.role === 'admin' && conv.createdBy?.toString() !== requesterId) {
+    throw new Error('Only the group creator can remove another admin');
+  }
+
+  const requesterMember = conv.members.find((m) => m.userId._id?.toString?.() === requesterId || m.userId.toString() === requesterId);
+  const actorName = requesterMember?.userId?.displayName || 'Someone';
+  const targetName = target.userId?.displayName || 'a member';
+
+  // Soft-remove so they can still see history + system notice
+  target.removedAt = new Date();
+  target.removedBy = requesterId;
+
+  const activeMembers = conv.members.filter((m) => !m.removedAt);
+  if (activeMembers.length === 0) {
+    await Conversation.findByIdAndDelete(conversationId);
+    return { deleted: true, id: conversationId };
+  }
+
+  if (conv.createdBy?.toString() === targetUserId) {
+    const nextAdmin = activeMembers.find((m) => m.role === 'admin') || activeMembers[0];
+    if (nextAdmin) {
+      nextAdmin.role = 'admin';
+      conv.createdBy = nextAdmin.userId._id || nextAdmin.userId;
+    }
+  }
+
+  await conv.save();
+
+  const systemContent = isSelf
+    ? `${actorName} left the group`
+    : `${actorName} removed ${targetName}`;
+
+  const systemMessage = await createSystemMessage({
+    roomId: conversationId,
+    userId: requesterId,
+    content: systemContent,
+    meta: {
+      kind: isSelf ? 'member_left' : 'member_removed',
+      actorId: requesterId,
+      actorName,
+      targetUserId,
+      targetName,
+    },
+  });
+
+  const room = await populateConversation(conv, isSelf ? targetUserId : requesterId);
+  return {
+    room,
+    systemMessage,
+    removedUserId: targetUserId,
+    noticeForRemoved: isSelf ? 'You left this group' : `${actorName} has removed you`,
+  };
+}
+
+export async function setGroupMemberRole(conversationId, requesterId, targetUserId, role) {
+  if (!['admin', 'member'].includes(role)) {
+    throw new Error('Role must be admin or member');
+  }
+
+  const conv = await Conversation.findById(conversationId);
+  if (!conv || conv.type !== 'group') return null;
+  if (!memberIsAdmin(conv, requesterId)) {
+    throw new Error('Only group admins can change roles');
+  }
+
+  const target = conv.members.find((m) => m.userId.toString() === targetUserId);
+  if (!target) throw new Error('User is not in this group');
+
+  if (role === 'member' && conv.createdBy?.toString() === targetUserId) {
+    throw new Error('Group creator must remain an admin');
+  }
+
+  const adminCount = conv.members.filter((m) => m.role === 'admin').length;
+  if (role === 'member' && target.role === 'admin' && adminCount <= 1) {
+    throw new Error('Group must have at least one admin');
+  }
+
+  target.role = role;
+  await conv.save();
+  return populateConversation(conv, requesterId);
+}
+
 export async function getConversationMembers(conversationId) {
   const conv = await Conversation.findById(conversationId).populate('members.userId');
   if (!conv) return [];
 
+  const creatorId = conv.createdBy?.toString();
+
   return conv.members
-    .map((m) => formatMember(m))
+    .map((m) => {
+      const formatted = formatMember(m);
+      if (!formatted) return null;
+      if (formatted.removedAt) return null; // hide removed from active list
+      if (creatorId && formatted.id === creatorId) {
+        formatted.role = 'admin';
+      } else if (!formatted.role) {
+        formatted.role = 'member';
+      }
+      return formatted;
+    })
     .filter(Boolean)
     .sort((a, b) => a.displayName.localeCompare(b.displayName));
 }
 
-export async function isConversationMember(conversationId, userId) {
+export async function isConversationMember(conversationId, userId, { requireActive = false } = {}) {
   const conv = await Conversation.findById(conversationId);
   if (!conv) return false;
-  return conv.members.some((m) => m.userId.toString() === userId);
+  const member = conv.members.find((m) => m.userId.toString() === userId);
+  if (!member) return false;
+  if (requireActive && member.removedAt) return false;
+  return true;
+}
+
+export async function canSendInConversation(conversationId, userId) {
+  return isConversationMember(conversationId, userId, { requireActive: true });
 }
 
 // Aliases for existing route names
@@ -398,7 +698,9 @@ export async function getMessageById(messageId, userId) {
 
 export async function createMessage({
   conversationId, roomId, userId, content, type = 'text',
-  imageUrl = null, fileUrl = null, fileName = null, fileSize = null, replyTo = null,
+  imageUrl = null, fileUrl = null, fileName = null, fileSize = null, replyTo = null, meta = null,
+  hiddenFor = [],
+  formatAsUserId = null,
 }) {
   const convId = conversationId || roomId;
 
@@ -412,13 +714,50 @@ export async function createMessage({
     fileName,
     fileSize,
     replyTo,
+    meta,
+    hiddenFor,
     deliveredTo: [userId],
     readBy: [{ userId, readAt: new Date() }],
   });
 
   await Conversation.findByIdAndUpdate(convId, { updatedAt: new Date() });
 
-  return getMessageById(message._id, userId);
+  const viewAs = formatAsUserId
+    || (hiddenFor.map(String).includes(String(userId)) ? (meta?.calleeId || userId) : userId);
+  return getMessageById(message._id, viewAs);
+}
+
+export async function createSystemMessage({ roomId, userId, content, meta = null, hiddenFor = [] }) {
+  return createMessage({
+    roomId,
+    userId,
+    content,
+    type: 'system',
+    meta,
+    hiddenFor,
+    formatAsUserId: meta?.calleeId || undefined,
+  });
+}
+
+export async function logCompletedCall({ roomId, callerId, calleeId, callType, durationSec }) {
+  const mins = Math.floor(durationSec / 60);
+  const secs = durationSec % 60;
+  const duration = `${mins}:${String(secs).padStart(2, '0')}`;
+  const label = callType === 'video' ? 'video' : 'voice';
+
+  return createSystemMessage({
+    roomId,
+    userId: callerId,
+    content: `${label.charAt(0).toUpperCase() + label.slice(1)} call · ${duration}`,
+    meta: {
+      kind: 'call_completed',
+      callType: callType || 'audio',
+      callerId,
+      calleeId,
+      duration,
+      durationSec,
+    },
+  });
 }
 
 export async function markMessageDelivered(messageId, userId) {

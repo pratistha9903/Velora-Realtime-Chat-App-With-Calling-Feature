@@ -18,8 +18,16 @@ import {
 import { authLimiter } from '../middleware/rateLimiter.js';
 import { authenticate } from '../middleware/auth.js';
 import { getAvatarColor } from '../utils/avatar.js';
+import { sendPasswordResetEmail, isEmailConfigured } from '../utils/mailer.js';
 
 const router = Router();
+
+function maskEmail(email) {
+  if (!email || !email.includes('@')) return 'your email';
+  const [local, domain] = email.split('@');
+  const visible = local.length <= 2 ? local[0] || '*' : `${local.slice(0, 2)}***`;
+  return `${visible}@${domain}`;
+}
 
 function authPayload(user) {
   return {
@@ -209,7 +217,10 @@ router.post('/forgot-password', authLimiter, async (req, res, next) => {
     const user = await getUserByEmail(email);
     // Always return success to avoid email enumeration
     if (!user) {
-      return res.json({ success: true, data: { message: 'If that email exists, a reset link was sent.' } });
+      return res.json({
+        success: true,
+        data: { message: 'If that email exists, a reset link was sent.' },
+      });
     }
 
     const resetToken = generateRandomToken();
@@ -217,14 +228,72 @@ router.post('/forgot-password', authLimiter, async (req, res, next) => {
     user.passwordResetExpires = new Date(Date.now() + 60 * 60 * 1000);
     await user.save();
 
-    console.log(`[password-reset] email=${email} token=${resetToken}`);
+    const clientUrl = (process.env.CLIENT_URL || 'http://localhost:5173').split(',')[0].trim().replace(/\/$/, '');
+    const resetUrl = `${clientUrl}/?mode=reset&token=${resetToken}`;
+
+    console.log(`[password-reset] email=${email} link=${resetUrl}`);
+
+    if (isEmailConfigured()) {
+      try {
+        await sendPasswordResetEmail({
+          to: email,
+          resetUrl,
+          displayName: user.displayName,
+        });
+        return res.json({
+          success: true,
+          data: {
+            message: 'Password reset link sent to your email. Check your inbox (and spam folder).',
+            emailed: true,
+          },
+        });
+      } catch (mailErr) {
+        console.error('Failed to send reset email:', mailErr.message);
+        if (mailErr.response) console.error('SMTP response:', mailErr.response);
+        return res.status(500).json({
+          success: false,
+          error: `Could not send reset email: ${mailErr.message}`,
+        });
+      }
+    }
+
+    // Fallback when SMTP is not configured (local demo)
+    return res.json({
+      success: true,
+      data: {
+        message: 'Email SMTP is not configured yet. Use the reset link below (demo mode).',
+        emailed: false,
+        resetToken,
+        resetUrl,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get('/verify-reset-token', authLimiter, async (req, res, next) => {
+  try {
+    const token = String(req.query.token || '').trim();
+    if (!token) {
+      return res.status(400).json({ success: false, error: 'Reset link is invalid' });
+    }
+
+    const user = await User.findOne({
+      passwordResetToken: hashToken(token),
+      passwordResetExpires: { $gt: new Date() },
+    }).select('email displayName');
+
+    if (!user) {
+      return res.status(400).json({ success: false, error: 'This reset link is invalid or has expired' });
+    }
 
     res.json({
       success: true,
       data: {
-        message: 'If that email exists, a reset link was sent.',
-        // Demo/dev: expose token so submission works without SMTP
-        resetToken: process.env.NODE_ENV === 'production' && process.env.SMTP_HOST ? undefined : resetToken,
+        valid: true,
+        email: maskEmail(user.email),
+        displayName: user.displayName,
       },
     });
   } catch (error) {
@@ -245,7 +314,7 @@ router.post('/reset-password', authLimiter, async (req, res, next) => {
     });
 
     if (!user) {
-      return res.status(400).json({ success: false, error: 'Invalid or expired reset token' });
+      return res.status(400).json({ success: false, error: 'This reset link is invalid or has expired' });
     }
 
     user.passwordHash = await bcrypt.hash(password, 12);
@@ -304,6 +373,27 @@ router.post('/google', authLimiter, async (req, res, next) => {
               emailVerified: data.email_verified === 'true' || data.email_verified === true,
             };
           }
+        }
+      } catch {
+        // fall through
+      }
+    }
+
+    // OAuth access token flow (custom Google button)
+    if (!profile && req.body.accessToken) {
+      try {
+        const resp = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+          headers: { Authorization: `Bearer ${req.body.accessToken}` },
+        });
+        if (resp.ok) {
+          const data = await resp.json();
+          profile = {
+            googleId: data.sub,
+            email: data.email,
+            name: data.name || data.email?.split('@')[0],
+            picture: data.picture,
+            emailVerified: !!data.email_verified,
+          };
         }
       } catch {
         // fall through

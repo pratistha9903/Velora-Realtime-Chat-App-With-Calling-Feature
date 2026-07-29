@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { LogOut, Wifi, WifiOff, Users, MessageCircle, Pin, VolumeX, Archive } from 'lucide-react';
+import {
+  LogOut, Wifi, WifiOff, Users, MessageCircle, Pin, VolumeX, Archive, Phone, Video,
+} from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
 import { useNotifications } from '../../context/NotificationContext';
@@ -9,21 +11,26 @@ import ConversationSidebar from './ConversationSidebar';
 import MembersPanel from './MembersPanel';
 import MessageBubble from './MessageBubble';
 import MessageInput from './MessageInput';
+import CallOverlay from './CallOverlay';
 import TypingIndicator from './TypingIndicator';
 import DateSeparator, { shouldShowDateSeparator } from './DateSeparator';
 import CreateGroupModal from './CreateGroupModal';
 import NewChatModal from './NewChatModal';
 import SearchModal from './SearchModal';
 import NotificationPanel from './NotificationPanel';
+import ContactProfileModal from './ContactProfileModal';
 import ProfileModal from '../auth/ProfileModal';
+import BrandMark from '../ui/BrandMark';
 import Avatar from '../ui/Avatar';
 import { MessageListSkeleton } from '../ui/Skeleton';
 import { formatDistanceToNow, parseISO } from 'date-fns';
+import { useContactNicknames } from '../../hooks/useContactNicknames';
 
 export default function ChatApp() {
   const { user, logout, token } = useAuth();
   const { addToast } = useToast();
-  const { addNotification, unreadCount } = useNotifications();
+  const { addNotification, unreadCount, setOpenHandler } = useNotifications();
+  const { labelFor } = useContactNicknames();
   const messagesEndRef = useRef(null);
   const activeRoomRef = useRef(null);
 
@@ -45,11 +52,17 @@ export default function ChatApp() {
   const [showNotifications, setShowNotifications] = useState(false);
   const [showMembers, setShowMembers] = useState(true);
   const [showProfile, setShowProfile] = useState(false);
+  const [outgoingCall, setOutgoingCall] = useState(null);
+  const [removalNotice, setRemovalNotice] = useState(null);
+  const [sidebarView, setSidebarView] = useState('chats');
+  const [contactProfile, setContactProfile] = useState(null);
+  const [showContactProfile, setShowContactProfile] = useState(false);
+  const [callHistoryTick, setCallHistoryTick] = useState(0);
 
   const {
     connected, onlineUsers, typingInRoom,
     joinRoom, leaveRoom, sendMessage, editMessage, deleteMessage,
-    reactMessage, starMessage, markRead, startTyping, stopTyping, on,
+    reactMessage, starMessage, markRead, startTyping, stopTyping, on, emit,
   } = useSocket(token, user, handleAuthError);
 
   const handleLogout = useCallback(() => {
@@ -76,6 +89,11 @@ export default function ChatApp() {
     setActiveRoom(room);
     setMessages([]);
     setReplyTo(null);
+    setRemovalNotice(
+      room.iWasRemoved
+        ? (room.removalNotice || 'You were removed from this group')
+        : null
+    );
     setLoadingMessages(true);
     joinRoom(room.id);
 
@@ -87,7 +105,7 @@ export default function ChatApp() {
       setMessages(msgs);
       setMembers(mems);
 
-      if (msgs.length > 0) {
+      if (msgs.length > 0 && !room.iWasRemoved) {
         const last = msgs[msgs.length - 1];
         markRead(room.id, last.id);
         api.markRead(room.id, last.id).catch(() => {});
@@ -114,6 +132,64 @@ export default function ChatApp() {
     }
   }, [addToast]);
 
+  const conversationsRef = useRef([]);
+  useEffect(() => {
+    conversationsRef.current = conversations;
+  }, [conversations]);
+
+  const bumpCallHistory = useCallback(() => {
+    setCallHistoryTick((t) => t + 1);
+  }, []);
+
+  const ensureRoomInList = useCallback(async (roomId, msg) => {
+    if (conversationsRef.current.some((r) => r.id === roomId)) return;
+    try {
+      const room = await api.getRoom(roomId);
+      setConversations((prev) => {
+        if (prev.some((r) => r.id === room.id)) return prev;
+        return [{
+          ...room,
+          lastMessage: msg?.type === 'image' ? '📷 Photo'
+            : msg?.type === 'system' ? msg.content
+              : msg?.content,
+          lastMessageAt: msg?.createdAt || room.lastMessageAt,
+          unreadCount: msg && msg.userId !== user.id ? 1 : 0,
+        }, ...prev];
+      });
+      joinRoom(room.id);
+    } catch {
+      loadConversations();
+    }
+  }, [joinRoom, loadConversations, user.id]);
+
+  const applyConversationPreview = useCallback((msg, isOwn, { skipUnread = false } = {}) => {
+    setConversations((prev) => {
+      const idx = prev.findIndex((r) => r.id === msg.roomId);
+      if (idx === -1) return prev;
+      const updated = [...prev];
+      updated[idx] = {
+        ...updated[idx],
+        lastMessage: msg.type === 'image' ? '📷 Photo'
+          : msg.type === 'system' ? msg.content
+            : msg.content,
+        lastMessageAt: msg.createdAt,
+        unreadCount: skipUnread
+          ? 0
+          : isOwn ? (updated[idx].unreadCount || 0) : (updated[idx].unreadCount || 0) + 1,
+      };
+      return updated.sort(
+        (a, b) => new Date(b.lastMessageAt || b.createdAt) - new Date(a.lastMessageAt || a.createdAt)
+      );
+    });
+  }, []);
+
+  useEffect(() => {
+    setOpenHandler?.((conversationId) => {
+      const room = conversationsRef.current.find((r) => r.id === conversationId);
+      if (room) selectRoom(room);
+    });
+  }, [setOpenHandler, selectRoom]);
+
   useEffect(() => {
     loadConversations();
   }, [loadConversations]);
@@ -123,20 +199,18 @@ export default function ChatApp() {
 
     cleanups.push(on('message:new', (msg) => {
       const isActive = msg.roomId === activeRoomRef.current;
+      const isOwn = msg.userId === user.id;
+      const isCallMsg = msg.type === 'system'
+        && (msg.meta?.kind === 'missed_call' || msg.meta?.kind === 'call_completed');
+
+      if (isCallMsg) bumpCallHistory();
 
       if (!isActive) {
-        setConversations((prev) =>
-          prev.map((r) =>
-            r.id === msg.roomId
-              ? {
-                  ...r,
-                  lastMessage: msg.type === 'image' ? '📷 Photo' : msg.content,
-                  lastMessageAt: msg.createdAt,
-                  unreadCount: (r.unreadCount || 0) + 1,
-                }
-              : r
-          ).sort((a, b) => new Date(b.lastMessageAt || b.createdAt) - new Date(a.lastMessageAt || a.createdAt))
-        );
+        if (!conversationsRef.current.some((r) => r.id === msg.roomId)) {
+          ensureRoomInList(msg.roomId, msg);
+        } else {
+          applyConversationPreview(msg, isOwn);
+        }
         return;
       }
 
@@ -144,8 +218,27 @@ export default function ChatApp() {
         if (prev.some((m) => m.id === msg.id)) return prev;
         return [...prev, msg];
       });
-      markRead(msg.roomId, msg.id);
-      api.markRead(msg.roomId, msg.id).catch(() => {});
+
+      applyConversationPreview(msg, isOwn, { skipUnread: true });
+
+      // Tab in background while this chat is open — still notify
+      if (!isOwn && document.hidden && msg.type !== 'system') {
+        addNotification({
+          type: 'message',
+          title: msg.displayName || 'New message',
+          body: msg.type === 'image' ? '📷 Photo'
+            : msg.type === 'file' ? `📎 ${msg.fileName || 'File'}`
+              : msg.type === 'audio' ? '🎤 Voice note'
+                : (msg.content || 'New message'),
+          conversationId: msg.roomId,
+          playSound: true,
+        });
+      }
+
+      if (msg.type !== 'system') {
+        markRead(msg.roomId, msg.id);
+        api.markRead(msg.roomId, msg.id).catch(() => {});
+      }
     }));
 
     cleanups.push(on('message:updated', (msg) => {
@@ -176,39 +269,87 @@ export default function ChatApp() {
         updated[idx] = { ...updated[idx], ...room };
         return updated.sort((a, b) => new Date(b.lastMessageAt || b.createdAt) - new Date(a.lastMessageAt || a.createdAt));
       });
+      if (activeRoomRef.current === room.id) {
+        setActiveRoom((prev) => ({ ...prev, ...room }));
+        if (room.members) setMembers(room.members.filter((m) => !m.removedAt || m.id === user.id));
+        if (room.iWasRemoved) {
+          setRemovalNotice((n) => n || 'You were removed from this group');
+        }
+      }
     }));
 
     cleanups.push(on('room:new', (room) => {
       setConversations((prev) => {
-        if (prev.some((r) => r.id === room.id)) return prev;
+        if (prev.some((r) => r.id === room.id)) {
+          return prev.map((r) => (r.id === room.id ? { ...r, ...room } : r));
+        }
         return [room, ...prev];
       });
       joinRoom(room.id);
-      addToast(`New conversation: ${room.displayName || room.name}`, 'info');
+    }));
+
+    cleanups.push(on('calls:updated', () => {
+      bumpCallHistory();
     }));
 
     cleanups.push(on('message:deleted-for-me', ({ id }) => {
       setMessages((prev) => prev.filter((m) => m.id !== id));
     }));
 
-    cleanups.push(on('notification:new', (notif) => {
-      addNotification(notif);
-      if (activeRoomRef.current !== notif.conversationId) {
-        addToast(`${notif.title}: ${notif.body}`, 'info');
+    cleanups.push(on('room:member-removed', ({ roomId, notice, systemMessage, room }) => {
+      const merged = room
+        ? { ...room, iWasRemoved: true, removalNotice: notice }
+        : null;
+      if (merged) {
+        setConversations((prev) => {
+          const idx = prev.findIndex((r) => r.id === roomId);
+          if (idx === -1) return [merged, ...prev];
+          const next = [...prev];
+          next[idx] = { ...next[idx], ...merged };
+          return next;
+        });
       }
+      if (activeRoomRef.current === roomId) {
+        if (merged) setActiveRoom((prev) => ({ ...prev, ...merged }));
+        setRemovalNotice(notice || 'You were removed from this group');
+        if (systemMessage) {
+          setMessages((prev) => {
+            if (prev.some((m) => m.id === systemMessage.id)) return prev;
+            return [...prev, systemMessage];
+          });
+        }
+        addToast(notice || 'You were removed from this group', 'info');
+      } else {
+        addToast(notice || 'You were removed from a group', 'info');
+      }
+    }));
+
+    cleanups.push(on('room:removed', ({ roomId }) => {
+      setConversations((prev) => prev.filter((r) => r.id !== roomId));
+      if (activeRoomRef.current === roomId) {
+        setActiveRoom(null);
+        setMessages([]);
+        addToast('You were removed from a group', 'info');
+      }
+    }));
+
+    cleanups.push(on('notification:new', (notif) => {
+      // Skip noisy toast duplicate — banner + sound come from addNotification
+      if (notif.type === 'incoming_call') return;
+      addNotification(notif);
     }));
 
     cleanups.push(on('error', ({ message }) => addToast(message, 'error')));
 
     return () => cleanups.forEach((fn) => fn?.());
-  }, [on, markRead, addToast, addNotification, joinRoom]);
+  }, [on, markRead, addToast, addNotification, joinRoom, user.id, bumpCallHistory, ensureRoomInList, applyConversationPreview]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, typingInRoom, activeRoom]);
 
   const handleSend = (payload) => {
-    if (!activeRoom) return;
+    if (!activeRoom || activeRoom.iWasRemoved) return;
     sendMessage(activeRoom.id, payload.content || '', {
       type: payload.type,
       imageUrl: payload.imageUrl,
@@ -237,6 +378,51 @@ export default function ChatApp() {
       addToast(err.message, 'error');
     }
   };
+
+  const dmPeer = (() => {
+    if (!activeRoom || activeRoom.type !== 'dm') return null;
+    const fromRoom = activeRoom.members?.find((m) => m.id !== user.id);
+    if (fromRoom) return fromRoom;
+    return members.find((m) => m.id !== user.id) || null;
+  })();
+
+  const startCall = (callType) => {
+    if (!dmPeer || !activeRoom) return;
+    if (!connected) {
+      addToast('Wait until status shows Live, then try again', 'error');
+      return;
+    }
+    setShowContactProfile(false);
+    setOutgoingCall({
+      peer: {
+        id: String(dmPeer.id),
+        displayName: dmPeer.displayName || activeRoom.displayName,
+        avatarColor: dmPeer.avatarColor,
+        avatarUrl: dmPeer.avatarUrl || activeRoom.avatarUrl,
+      },
+      roomId: activeRoom.id,
+      callType,
+    });
+  };
+
+  const openContactProfile = useCallback(({ peer, room }) => {
+    if (!peer) return;
+    setContactProfile({ peer, room: room || activeRoom });
+    setShowContactProfile(true);
+  }, [activeRoom]);
+
+  const handleDeleteChat = useCallback((roomId) => {
+    leaveRoom(roomId);
+    setConversations((prev) => prev.filter((r) => r.id !== roomId));
+    if (activeRoomRef.current === roomId) {
+      setActiveRoom(null);
+      setMessages([]);
+    }
+  }, [leaveRoom]);
+
+  const dmTitle = activeRoom?.type === 'dm' && dmPeer
+    ? labelFor(dmPeer.id, activeRoom.displayName || dmPeer.displayName)
+    : (activeRoom?.displayName || activeRoom?.name);
 
   const lastSeenLabel = (() => {
     if (!activeRoom || activeRoom.type !== 'dm') return null;
@@ -278,7 +464,7 @@ export default function ChatApp() {
     return (
       <div className="app-layout">
         <header className="app-top-bar">
-          <div className="app-top-brand"><MessageCircle size={20} /><span>PulseChat</span></div>
+          <BrandMark size="md" />
           <button className="sign-out-btn" onClick={handleLogout}><LogOut size={16} /><span>Sign out</span></button>
         </header>
         <div className="app-shell">
@@ -292,10 +478,7 @@ export default function ChatApp() {
   return (
     <div className="app-layout">
       <header className="app-top-bar">
-        <div className="app-top-brand">
-          <MessageCircle size={20} />
-          <span>PulseChat</span>
-        </div>
+        <BrandMark size="md" />
         <div className="app-top-right">
           <span className="app-top-user">{user.displayName}</span>
           <button className="sign-out-btn" onClick={handleLogout} title="Sign out">
@@ -309,12 +492,17 @@ export default function ChatApp() {
       <ConversationSidebar
         conversations={conversations}
         activeId={activeRoom?.id}
-        onSelect={selectRoom}
+        onSelect={(room) => { setSidebarView('chats'); selectRoom(room); }}
         onNewChat={() => setShowNewChat(true)}
         onNewGroup={() => setShowNewGroup(true)}
         onSearch={() => setShowSearch(true)}
         onNotifications={() => setShowNotifications(!showNotifications)}
         onProfile={() => setShowProfile(true)}
+        onContactClick={openContactProfile}
+        sidebarView={sidebarView}
+        onSidebarViewChange={setSidebarView}
+        callHistoryTick={callHistoryTick}
+        onSocket={on}
         notificationCount={unreadCount}
         user={user}
         loading={loading}
@@ -332,11 +520,20 @@ export default function ChatApp() {
         {activeRoom ? (
           <>
             <header className="chat-panel-header">
-              <div className="chat-panel-title">
+              <button
+                type="button"
+                className={`chat-panel-title ${activeRoom.type === 'dm' ? 'clickable' : ''}`}
+                onClick={() => {
+                  if (activeRoom.type === 'dm' && dmPeer) {
+                    openContactProfile({ peer: dmPeer, room: activeRoom });
+                  }
+                }}
+                title={activeRoom.type === 'dm' ? 'View contact' : undefined}
+              >
                 {activeRoom.type === 'dm' ? (
                   <Avatar
-                    name={activeRoom.displayName}
-                    color={activeRoom.members?.find((m) => m.id !== user.id)?.avatarColor || '#6366f1'}
+                    name={dmPeer?.displayName || activeRoom.displayName}
+                    color={activeRoom.members?.find((m) => m.id !== user.id)?.avatarColor || '#0d9488'}
                     avatarUrl={activeRoom.avatarUrl || activeRoom.members?.find((m) => m.id !== user.id)?.avatarUrl}
                     size={40}
                     online={onlineUsers.some((u) =>
@@ -344,22 +541,46 @@ export default function ChatApp() {
                     )}
                   />
                 ) : (
-                  <Avatar name={activeRoom.displayName || activeRoom.name} color={activeRoom.avatarColor || '#6366f1'} size={40} />
+                  <Avatar name={activeRoom.displayName || activeRoom.name} color={activeRoom.avatarColor || '#0d9488'} size={40} />
                 )}
                 <div>
-                  <h2>{activeRoom.displayName || activeRoom.name}</h2>
+                  <h2>{dmTitle}</h2>
                   <p>
-                    {activeRoom.type === 'group'
-                      ? `${members.length} members`
-                      : lastSeenLabel}
+                    {activeRoom.iWasRemoved
+                      ? 'Removed from group'
+                      : activeRoom.type === 'group'
+                        ? `${members.length} members`
+                        : lastSeenLabel}
                   </p>
                 </div>
-              </div>
+              </button>
               <div className="chat-panel-actions">
                 <div className={`conn-badge ${connected ? 'on' : 'off'}`}>
                   {connected ? <Wifi size={14} /> : <WifiOff size={14} />}
                   {connected ? 'Live' : 'Offline'}
                 </div>
+                {activeRoom.type === 'dm' && dmPeer && (
+                  <>
+                    <button
+                      type="button"
+                      className="icon-btn call-action"
+                      title="Voice call"
+                      onClick={() => startCall('audio')}
+                      disabled={!connected}
+                    >
+                      <Phone size={16} />
+                    </button>
+                    <button
+                      type="button"
+                      className="icon-btn call-action"
+                      title="Video call"
+                      onClick={() => startCall('video')}
+                      disabled={!connected}
+                    >
+                      <Video size={16} />
+                    </button>
+                  </>
+                )}
                 <button
                   className={`icon-btn ${activeRoom.pinned ? 'active' : ''}`}
                   title={activeRoom.pinned ? 'Unpin' : 'Pin chat'}
@@ -381,9 +602,14 @@ export default function ChatApp() {
                 >
                   <Archive size={16} />
                 </button>
-                {activeRoom.type === 'group' && (
-                  <button className="icon-btn" onClick={() => setShowMembers(!showMembers)} title="Members">
-                    <Users size={18} />
+                {activeRoom.type === 'group' && !activeRoom.iWasRemoved && (
+                  <button
+                    className={`manage-group-btn ${showMembers ? 'active' : ''}`}
+                    onClick={() => setShowMembers(!showMembers)}
+                    title="Manage group members"
+                  >
+                    <Users size={16} />
+                    <span>Manage group</span>
                   </button>
                 )}
               </div>
@@ -408,6 +634,7 @@ export default function ChatApp() {
                         message={msg}
                         isOwn={msg.userId === user.id}
                         showAvatar={showAvatar}
+                        currentUserId={user.id}
                         onReply={setReplyTo}
                         onEdit={editMessage}
                         onDelete={handleDelete}
@@ -426,7 +653,9 @@ export default function ChatApp() {
               onSend={handleSend}
               onTypingStart={() => startTyping(activeRoom.id)}
               onTypingStop={() => stopTyping(activeRoom.id)}
-              disabled={!connected}
+              disabled={!connected || !!activeRoom.iWasRemoved}
+              blocked={!!activeRoom.iWasRemoved}
+              blockedMessage={removalNotice || 'You were removed from this group and cannot send messages'}
               replyTo={replyTo}
               onCancelReply={() => setReplyTo(null)}
             />
@@ -442,14 +671,38 @@ export default function ChatApp() {
         )}
       </main>
 
-      {showMembers && activeRoom?.type === 'group' && (
+      {showMembers && activeRoom?.type === 'group' && !activeRoom.iWasRemoved && (
         <MembersPanel
           members={members}
           onlineUsers={onlineUsers}
           currentUser={user}
+          room={activeRoom}
+          onClose={() => setShowMembers(false)}
           onStartDm={async (userId) => {
             const room = await api.createDm(userId);
             handleChatCreated(room);
+          }}
+          onMembersChanged={async (updated) => {
+            if (updated?.deleted) {
+              setConversations((prev) => prev.filter((r) => r.id !== activeRoom.id));
+              setActiveRoom(null);
+              setMessages([]);
+              return;
+            }
+            if (updated?.id) {
+              setActiveRoom(updated);
+              try {
+                const mems = await api.getRoomMembers(updated.id);
+                setMembers(mems);
+              } catch {
+                setMembers((updated.members || []).filter((m) => !m.removedAt));
+              }
+              setConversations((prev) => prev.map((r) => (r.id === updated.id ? { ...r, ...updated } : r)));
+              if (updated.iWasRemoved) {
+                setRemovalNotice('You left this group');
+                setShowMembers(false);
+              }
+            }
           }}
         />
       )}
@@ -457,9 +710,25 @@ export default function ChatApp() {
       {showNewChat && <NewChatModal onClose={() => setShowNewChat(false)} onChatCreated={handleChatCreated} />}
       {showNewGroup && <CreateGroupModal onClose={() => setShowNewGroup(false)} onCreate={handleCreateGroup} />}
       {showProfile && <ProfileModal onClose={() => setShowProfile(false)} />}
+      {showContactProfile && contactProfile?.peer && (
+        <ContactProfileModal
+          peer={contactProfile.peer}
+          room={contactProfile.room}
+          online={onlineUsers.some((u) => u.id === contactProfile.peer.id)}
+          lastSeen={contactProfile.room?.otherLastSeen}
+          onClose={() => setShowContactProfile(false)}
+          onDeleteChat={handleDeleteChat}
+          onStartCall={(type) => startCall(type)}
+          callHistoryTick={callHistoryTick}
+          onOpenChat={() => {
+            if (contactProfile.room) selectRoom(contactProfile.room);
+          }}
+        />
+      )}
       {showSearch && (
         <SearchModal
           onClose={() => setShowSearch(false)}
+          onSelectUser={(room) => handleChatCreated(room)}
           onSelectResult={(result) => {
             const room = conversations.find((r) => r.id === result.roomId);
             if (room) selectRoom(room);
@@ -467,6 +736,16 @@ export default function ChatApp() {
         />
       )}
       </div>
+
+      <CallOverlay
+        user={user}
+        emit={emit}
+        on={on}
+        addToast={addToast}
+        connected={connected}
+        outgoing={outgoingCall}
+        onClearOutgoing={() => setOutgoingCall(null)}
+      />
     </div>
   );
 }
