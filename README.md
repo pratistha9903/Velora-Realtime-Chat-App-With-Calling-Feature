@@ -57,6 +57,7 @@ Velora is a real-time messaging platform where users can:
 - View **contact profiles**, set **custom names** (local only), and **delete chats**
 - View **previous chat history** stored in MongoDB
 - See **online/offline status**, **typing indicators**, and **read/delivered receipts**
+- Hear **message chimes** and **call ringtones** for incoming activity (respects muted chats)
 
 The application follows the assignment requirement of using **Socket.io** for real-time communication (not polling or third-party realtime services).
 
@@ -109,6 +110,8 @@ The application follows the assignment requirement of using **Socket.io** for re
 | Private chats | ✅ |
 | Group chats | ✅ |
 | In-app + browser notifications | ✅ |
+| **Message sound alerts** (other chats / background tab) | ✅ |
+| **Incoming call ringtone** (Web Audio API) | ✅ |
 | Emoji picker | ✅ |
 | Rate limiting, Helmet, request logging | ✅ |
 | **Voice & video calls (WebRTC)** | ✅ |
@@ -119,6 +122,7 @@ The application follows the assignment requirement of using **Socket.io** for re
 | **Premium dark UI** (Velora theme) | ✅ |
 | **Show/hide password** on auth forms | ✅ |
 | **Secure password reset via email link** | ✅ |
+| **Optimistic UI** (pin / mute / archive) | ✅ |
 
 ---
 
@@ -178,6 +182,9 @@ realtime-chat-app/
 │   │   ├── context/                # Auth, Toast, Notification state
 │   │   ├── hooks/
 │   │   │   └── useSocket.js        # Socket.io client hook
+│   │   ├── utils/
+│   │   │   ├── audio.js            # Message chimes + call ringtones (autoplay unlock)
+│   │   │   └── conversations.js    # Chat list sorting helpers
 │   │   ├── services/
 │   │   │   └── api.js              # REST API client
 │   │   └── App.jsx
@@ -433,13 +440,32 @@ CLIENT_URL=https://pulsechat-web.onrender.com
 - **Typing indicator** — start typing in an open chat
 - **Online status** — green dot on avatars when users are connected
 - **Read receipts** — checkmarks: sent → delivered → read
-- **Notifications** — receive a message in another conversation (popup + sound)
-- **Voice/video call** — call button in a DM chat header
+- **Notifications & sounds** — receive a message in another conversation or with the tab in the background: in-app banner + two-tone chime (muted chats stay silent)
+- **Voice/video call** — call button in a DM chat header; incoming calls play a ringtone until you accept or decline
 - **Calls tab** — sidebar tab showing call history
 - **Contact profile** — click a name/avatar → view username, set custom name, delete chat
 - **Forgot password** — email reset link (requires SMTP)
+- **Pin / mute / archive** — right-click or use chat header actions; mute disables sound for that chat
 - **Image upload** — attach an image in the message input
 - **Sign out** — top-right button
+
+### Sound notifications
+
+Velora plays sounds for:
+
+| Event | When it plays |
+|-------|----------------|
+| **New message** | Message arrives in a chat you are **not** viewing, or while the browser tab is **in the background** |
+| **Incoming call** | Someone starts a voice/video call to you |
+| **Outgoing call** | You place a call (ringback while waiting) |
+
+**Browser requirement:** Modern browsers block audio until you interact with the page (click, tap, or key press). After you sign in or click anywhere once, sounds work for the rest of the session.
+
+**Tips:**
+
+- Keep system and browser volume unmuted
+- Muted conversations do not play message sounds
+- Messages in the **currently open chat** (tab visible) do not chime — you already see them live
 
 ---
 
@@ -529,8 +555,11 @@ CLIENT_URL=https://pulsechat-web.onrender.com
 | `typing:start` / `typing:stop` | Typing indicators |
 | `call:incoming` / `call:answered` / `call:rejected` / `call:ended` | WebRTC call signaling |
 | `calls:updated` | Call history changed (refresh Calls tab) |
-| `notification:new` | New message notification |
+| `room:member-removed` | User removed from a group |
+| `room:removed` | Conversation removed for user |
 | `error` | Socket-level error message |
+
+> **Note:** In-app notifications and sounds are triggered **client-side** when `message:new` or call events arrive. Muted chats are respected; the UI uses `frontend/src/utils/audio.js` for chimes and ringtones.
 
 ### Authentication
 
@@ -587,6 +616,10 @@ When a user connects, the server joins their socket to **all** conversations the
 ### 8. Layered backend structure
 
 Code is split into **routes** (HTTP), **sockets** (real-time), **models** (schema), **services** (business logic), and **middleware** (auth, errors). This keeps the codebase maintainable and testable.
+
+### 9. Shared audio with autoplay unlock
+
+Browsers require a user gesture before playing sound. Velora uses a **single shared `AudioContext`** (`frontend/src/utils/audio.js`) that unlocks on the first click, tap, or key press after load. Message chimes and call ringtones reuse this context so notifications work reliably after sign-in.
 
 ---
 
@@ -695,7 +728,7 @@ This project is submitted as a **React web application** (not React Native).
 4. Start private chat and send messages live
 5. Show typing indicator and online status
 6. Refresh page and show history persists
-7. (Optional) Show group chat and notifications
+7. (Optional) Show group chat, message sound in another tab, and an incoming call ringtone
 
 ---
 
@@ -733,6 +766,24 @@ Get-NetTCPConnection -LocalPort 3001 | ForEach-Object { Stop-Process -Id $_.Owni
 - Both users must be signed in
 - Open the same conversation on both sides
 - Check browser console for socket errors
+
+### No sound for messages or calls
+
+- **Click anywhere** on the page once after load (sign-in counts) — browsers block audio until you interact
+- Check **system volume** and that the browser tab is not muted
+- Confirm the chat is **not muted** (muted chats suppress message chimes)
+- Message sounds only play for **other conversations** or when the tab is **in the background** — not for the chat you are actively viewing
+- For calls, allow **microphone/camera** permissions when prompted
+- Hard refresh: `Ctrl+Shift+R` (Windows) or `Cmd+Shift+R` (Mac)
+
+### Google Sign-In popup still shows "Pulse Chat"
+
+The name in Google’s OAuth popup is set in **Google Cloud Console**, not in this repo:
+
+1. Open [Google Cloud Console](https://console.cloud.google.com/) → your project
+2. **APIs & Services** → **OAuth consent screen**
+3. Set **App name** to **Velora** and save
+4. Use the same **OAuth client ID** in `frontend/.env` as `VITE_GOOGLE_CLIENT_ID`
 
 ### CORS errors
 
