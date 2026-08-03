@@ -986,6 +986,16 @@ a { color: var(--accent-hover); }
   width: 7px; height: 7px; border-radius: 50%; background: #6366f1;
   animation: pulse-rec 1s infinite;
 }
+.google-btn-text { font-weight: 600; }
+.google-auth-hint {
+  margin-top: 0.55rem; font-size: 0.72rem; line-height: 1.45;
+  color: var(--text-muted); text-align: center;
+}
+.chat-panel-actions .icon-btn.active {
+  color: var(--accent-hover);
+  background: rgba(20, 184, 166, 0.14);
+  border-color: rgba(20, 184, 166, 0.35);
+}
 .manage-group-btn {
   display: inline-flex; align-items: center; gap: 0.4rem;
   padding: 0.45rem 0.75rem; border-radius: 10px; font-size: 0.8rem; font-weight: 600;

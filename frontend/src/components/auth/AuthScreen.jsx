@@ -1,13 +1,12 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import {
-  Sparkles, ArrowRight, UserPlus, LogIn, KeyRound, Eye, EyeOff,
-  Mail, CheckCircle2, AlertCircle, Loader2,
+  ArrowRight, UserPlus, LogIn, KeyRound, Eye, EyeOff,
+  Mail, AlertCircle, Loader2,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
 import { api } from '../../services/api';
 import BrandMark, { BrandIcon } from '../ui/BrandMark';
-import { APP_NAME, APP_TAGLINE } from '../../config/brand';
 
 const GOOGLE_CLIENT_ID = String(import.meta.env.VITE_GOOGLE_CLIENT_ID || '').trim();
 
@@ -282,16 +281,6 @@ export default function AuthScreen() {
               {mode === 'forgot-sent' && 'Check your email'}
               {mode === 'reset' && 'Create new password'}
             </h1>
-            <p className="auth-tagline">
-              <Sparkles size={14} />
-              {mode === 'login' && `Sign in to continue to ${APP_NAME}`}
-              {mode === 'register' && APP_TAGLINE}
-              {mode === 'forgot' && 'Enter your email and we’ll send a secure reset link'}
-              {mode === 'forgot-sent' && 'Open the link in your email to set a new password'}
-              {mode === 'reset' && resetEmailHint
-                ? `Resetting password for ${resetEmailHint}`
-                : 'Choose a strong password (min 6 characters)'}
-            </p>
           </div>
 
           {mode === 'forgot-sent' && (
@@ -438,13 +427,6 @@ export default function AuthScreen() {
             </form>
           )}
 
-          {mode === 'reset' && resetTokenValid && (
-            <p className="auth-reset-note">
-              <CheckCircle2 size={14} />
-              Secure link verified — your new password will replace the old one.
-            </p>
-          )}
-
           {showGoogle && (
             <div className="google-auth">
               <div className="auth-divider"><span>or</span></div>
@@ -458,6 +440,7 @@ export default function AuthScreen() {
                 {mode === 'register' ? 'Sign up with Google' : 'Continue with Google'}
                 {!googleReady && <span className="google-loading-dot" />}
               </button>
+              
             </div>
           )}
         </div>

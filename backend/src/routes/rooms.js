@@ -140,6 +140,12 @@ router.patch('/:roomId/prefs', async (req, res, next) => {
       pinned,
     });
     if (!room) return res.status(404).json({ success: false, error: 'Conversation not found' });
+
+    const io = req.app.get('io');
+    if (io) {
+      emitToUser(io, req.user.id, 'room:updated', room);
+    }
+
     res.json({ success: true, data: room });
   } catch (error) {
     next(error);

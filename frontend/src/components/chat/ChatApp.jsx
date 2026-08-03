@@ -25,6 +25,7 @@ import Avatar from '../ui/Avatar';
 import { MessageListSkeleton } from '../ui/Skeleton';
 import { formatDistanceToNow, parseISO } from 'date-fns';
 import { useContactNicknames } from '../../hooks/useContactNicknames';
+import { sortConversations } from '../../utils/conversations';
 
 export default function ChatApp() {
   const { user, logout, token } = useAuth();
@@ -177,9 +178,7 @@ export default function ChatApp() {
           ? 0
           : isOwn ? (updated[idx].unreadCount || 0) : (updated[idx].unreadCount || 0) + 1,
       };
-      return updated.sort(
-        (a, b) => new Date(b.lastMessageAt || b.createdAt) - new Date(a.lastMessageAt || a.createdAt)
-      );
+      return sortConversations(updated);
     });
   }, []);
 
@@ -211,6 +210,22 @@ export default function ChatApp() {
         } else {
           applyConversationPreview(msg, isOwn);
         }
+
+        if (!isOwn && msg.type !== 'system') {
+          const room = conversationsRef.current.find((r) => r.id === msg.roomId);
+          if (!room?.muted) {
+            addNotification({
+              type: 'message',
+              title: msg.displayName || 'New message',
+              body: msg.type === 'image' ? '📷 Photo'
+                : msg.type === 'file' ? `📎 ${msg.fileName || 'File'}`
+                  : msg.type === 'audio' ? '🎤 Voice note'
+                    : (msg.content || 'New message'),
+              conversationId: msg.roomId,
+              playSound: true,
+            });
+          }
+        }
         return;
       }
 
@@ -222,7 +237,8 @@ export default function ChatApp() {
       applyConversationPreview(msg, isOwn, { skipUnread: true });
 
       // Tab in background while this chat is open — still notify
-      if (!isOwn && document.hidden && msg.type !== 'system') {
+      const activeRoomData = conversationsRef.current.find((r) => r.id === msg.roomId);
+      if (!isOwn && document.hidden && msg.type !== 'system' && !activeRoomData?.muted) {
         addNotification({
           type: 'message',
           title: msg.displayName || 'New message',
@@ -264,10 +280,10 @@ export default function ChatApp() {
     cleanups.push(on('room:updated', (room) => {
       setConversations((prev) => {
         const idx = prev.findIndex((r) => r.id === room.id);
-        if (idx === -1) return [room, ...prev];
+        if (idx === -1) return sortConversations([room, ...prev]);
         const updated = [...prev];
         updated[idx] = { ...updated[idx], ...room };
-        return updated.sort((a, b) => new Date(b.lastMessageAt || b.createdAt) - new Date(a.lastMessageAt || a.createdAt));
+        return sortConversations(updated);
       });
       if (activeRoomRef.current === room.id) {
         setActiveRoom((prev) => ({ ...prev, ...room }));
@@ -369,12 +385,27 @@ export default function ChatApp() {
 
   const updatePrefs = async (prefs) => {
     if (!activeRoom) return;
+    const roomId = activeRoom.id;
+    const previous = activeRoom;
+
+    // Optimistic update — UI changes instantly
+    const optimistic = { ...activeRoom, ...prefs };
+    setActiveRoom(optimistic);
+    setConversations((prev) => sortConversations(
+      prev.map((r) => (r.id === roomId ? { ...r, ...prefs } : r))
+    ));
+
     try {
-      const room = await api.updateRoomPrefs(activeRoom.id, prefs);
-      setActiveRoom(room);
-      setConversations((prev) => prev.map((r) => (r.id === room.id ? { ...r, ...room } : r)));
-      addToast('Chat preferences updated', 'success');
+      const room = await api.updateRoomPrefs(roomId, prefs);
+      setActiveRoom((current) => (current?.id === roomId ? { ...current, ...room } : current));
+      setConversations((prev) => sortConversations(
+        prev.map((r) => (r.id === roomId ? { ...r, ...room } : r))
+      ));
     } catch (err) {
+      setActiveRoom(previous);
+      setConversations((prev) => sortConversations(
+        prev.map((r) => (r.id === roomId ? { ...r, ...previous } : r))
+      ));
       addToast(err.message, 'error');
     }
   };

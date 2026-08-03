@@ -4,6 +4,7 @@ import {
 } from 'lucide-react';
 import Avatar from '../ui/Avatar';
 import { APP_NAME } from '../../config/brand';
+import { startCallRingtone, stopCallRingtone, playDeclineTone } from '../../utils/audio';
 
 const ICE_SERVERS = {
   iceServers: [
@@ -11,69 +12,6 @@ const ICE_SERVERS = {
     { urls: 'stun:stun1.l.google.com:19302' },
   ],
 };
-
-function playRingtone(audioCtxRef, oscRef, gainRef) {
-  try {
-    const Ctx = window.AudioContext || window.webkitAudioContext;
-    if (!Ctx) return;
-    const ctx = audioCtxRef.current || new Ctx();
-    audioCtxRef.current = ctx;
-    if (ctx.state === 'suspended') ctx.resume();
-
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.type = 'sine';
-    osc.frequency.value = 440;
-    gain.gain.value = 0.08;
-    osc.connect(gain);
-    gain.connect(ctx.destination);
-    osc.start();
-
-    let on = true;
-    const pulse = setInterval(() => {
-      on = !on;
-      gain.gain.setTargetAtTime(on ? 0.08 : 0.001, ctx.currentTime, 0.05);
-      if (on) osc.frequency.setValueAtTime(480, ctx.currentTime);
-      else osc.frequency.setValueAtTime(440, ctx.currentTime);
-    }, 500);
-
-    oscRef.current = osc;
-    gainRef.current = gain;
-    oscRef.current._pulse = pulse;
-  } catch {
-    /* ignore */
-  }
-}
-
-function stopRingtone(audioCtxRef, oscRef, gainRef) {
-  try {
-    if (oscRef.current?._pulse) clearInterval(oscRef.current._pulse);
-    oscRef.current?.stop();
-  } catch { /* already stopped */ }
-  oscRef.current = null;
-  gainRef.current = null;
-}
-
-function playDeclineTone() {
-  try {
-    const Ctx = window.AudioContext || window.webkitAudioContext;
-    if (!Ctx) return;
-    const ctx = new Ctx();
-    const now = ctx.currentTime;
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.type = 'triangle';
-    osc.frequency.setValueAtTime(420, now);
-    osc.frequency.exponentialRampToValueAtTime(180, now + 0.35);
-    gain.gain.setValueAtTime(0.1, now);
-    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.4);
-    osc.connect(gain);
-    gain.connect(ctx.destination);
-    osc.start(now);
-    osc.stop(now + 0.45);
-    setTimeout(() => ctx.close().catch(() => {}), 600);
-  } catch { /* ignore */ }
-}
 
 function showCallNotification(title, body) {
   try {
@@ -135,9 +73,6 @@ export default function CallOverlay({
   const roomIdRef = useRef(null);
   const callTypeRef = useRef('audio');
   const answeredRef = useRef(false);
-  const audioCtxRef = useRef(null);
-  const oscRef = useRef(null);
-  const gainRef = useRef(null);
   const notifRef = useRef(null);
   const startingRef = useRef(false);
   const hasIncomingRef = useRef(false);
@@ -150,7 +85,7 @@ export default function CallOverlay({
   }, [result]);
 
   const stopRing = useCallback(() => {
-    stopRingtone(audioCtxRef, oscRef, gainRef);
+    stopCallRingtone();
     if (notifRef.current) {
       try { notifRef.current.close(); } catch { /* */ }
       notifRef.current = null;
@@ -316,7 +251,7 @@ export default function CallOverlay({
       setResult(null);
       setStatus('ringing');
       setCall(callData);
-      playRingtone(audioCtxRef, oscRef, gainRef);
+      startCallRingtone();
 
       const stream = await getMedia(callType);
       const pc = createPeerConnection(peer.id);
@@ -411,7 +346,7 @@ export default function CallOverlay({
       hasIncomingRef.current = true;
       setResult(null);
       setIncoming(payload);
-      playRingtone(audioCtxRef, oscRef, gainRef);
+      startCallRingtone();
       notifRef.current = showCallNotification(
         'Incoming call',
         `${payload.from.displayName} is calling you on ${APP_NAME}`

@@ -1,37 +1,11 @@
 import { createContext, useContext, useState, useCallback, useEffect, useRef } from 'react';
 import { APP_NAME } from '../config/brand';
+import { playMessageChime } from '../utils/audio';
 
 const NotificationContext = createContext(null);
 
 function playMessageSound() {
-  try {
-    const Ctx = window.AudioContext || window.webkitAudioContext;
-    if (!Ctx) return;
-    const ctx = new Ctx();
-    const now = ctx.currentTime;
-
-    const beep = (freq, start, dur, gain = 0.12) => {
-      const osc = ctx.createOscillator();
-      const g = ctx.createGain();
-      osc.type = 'sine';
-      osc.frequency.value = freq;
-      g.gain.setValueAtTime(0.0001, now + start);
-      g.gain.exponentialRampToValueAtTime(gain, now + start + 0.02);
-      g.gain.exponentialRampToValueAtTime(0.0001, now + start + dur);
-      osc.connect(g);
-      g.connect(ctx.destination);
-      osc.start(now + start);
-      osc.stop(now + start + dur + 0.02);
-    };
-
-    // Soft two-tone chime (WhatsApp-like)
-    beep(880, 0, 0.12, 0.1);
-    beep(1174, 0.12, 0.18, 0.09);
-
-    setTimeout(() => ctx.close().catch(() => {}), 800);
-  } catch {
-    /* autoplay / unsupported */
-  }
+  playMessageChime().catch(() => {});
 }
 
 export function NotificationProvider({ children }) {
