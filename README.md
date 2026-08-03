@@ -1,6 +1,8 @@
-# PulseChat — Real-Time Chat Application
+# Velora — Real-Time Chat Application
 
-A full-stack, WhatsApp-style real-time chat application built with **React**, **Node.js**, **Express**, **Socket.io**, and **MongoDB**. Multiple users can connect at the same time, chat live, and see message history after refresh.
+A full-stack, premium real-time chat application (**Velora**) built with **React**, **Node.js**, **Express**, **Socket.io**, and **MongoDB**. Multiple users can connect at the same time, chat live, make voice/video calls, and see message history after refresh.
+
+> **Note:** The UI brand is **Velora**. Some deployment URLs and database names may still use the original **PulseChat** naming.
 
 ## Live Demo (Deployed on Render)
 
@@ -44,12 +46,15 @@ https://github.com/user-attachments/assets/235eb108-585c-401f-848d-7457a6bf661b
 
 ## Project Overview
 
-PulseChat is a real-time messaging platform where users can:
+Velora is a real-time messaging platform where users can:
 
-- Register and log in securely
+- Register and log in securely (username/password or Google)
+- Reset password via **email link** (SMTP)
 - Start **private (1-to-1)** chats
 - Create **group chats** with multiple members
 - Send and receive messages **instantly** without page refresh
+- Make **voice & video calls** (WebRTC) with call history
+- View **contact profiles**, set **custom names** (local only), and **delete chats**
 - View **previous chat history** stored in MongoDB
 - See **online/offline status**, **typing indicators**, and **read/delivered receipts**
 
@@ -106,6 +111,14 @@ The application follows the assignment requirement of using **Socket.io** for re
 | In-app + browser notifications | ✅ |
 | Emoji picker | ✅ |
 | Rate limiting, Helmet, request logging | ✅ |
+| **Voice & video calls (WebRTC)** | ✅ |
+| **Call history tab** | ✅ |
+| **Contact profile** (username, custom local nickname) | ✅ |
+| **Delete chat** (per-user soft delete) | ✅ |
+| **Real-time UI updates** (no page refresh) | ✅ |
+| **Premium dark UI** (Velora theme) | ✅ |
+| **Show/hide password** on auth forms | ✅ |
+| **Secure password reset via email link** | ✅ |
 
 ---
 
@@ -148,6 +161,7 @@ realtime-chat-app/
 │   │   │   ├── chatSocket.js       # Real-time events
 │   │   │   └── socketHelpers.js    # Broadcast helpers
 │   │   ├── utils/
+│   │   │   └── mailer.js           # SMTP password-reset emails
 │   │   └── server.js               # App entry point
 │   ├── uploads/                    # Uploaded images
 │   ├── .env.example
@@ -155,10 +169,12 @@ realtime-chat-app/
 │
 ├── frontend/
 │   ├── src/
+│   │   ├── config/
+│   │   │   └── brand.js            # App name & tagline (Velora)
 │   │   ├── components/
-│   │   │   ├── auth/               # Login / register screen
-│   │   │   ├── chat/               # Chat UI components
-│   │   │   └── ui/                 # Reusable UI (Avatar, Modal, Toast)
+│   │   │   ├── auth/               # Login / register / forgot password
+│   │   │   ├── chat/               # Chat UI, calls, contact profile
+│   │   │   └── ui/                 # Avatar, Modal, Toast, BrandMark
 │   │   ├── context/                # Auth, Toast, Notification state
 │   │   ├── hooks/
 │   │   │   └── useSocket.js        # Socket.io client hook
@@ -311,8 +327,18 @@ npm run preview
 | `MONGODB_URI` | Yes | MongoDB connection string | `mongodb+srv://user:pass@cluster.mongodb.net/pulsechat` |
 | `JWT_SECRET` | Yes | Secret for signing JWT tokens | `your-long-random-secret` |
 | `JWT_EXPIRES_IN` | No | Token expiry | `7d` |
+| `JWT_REFRESH_EXPIRES_IN` | No | Refresh token expiry | `30d` |
+| `APP_NAME` | No | Display name in emails | `Velora` |
+| `GOOGLE_CLIENT_ID` | No | Google OAuth (backend) | — |
+| `SMTP_HOST` | For email reset | SMTP server | `smtp.gmail.com` |
+| `SMTP_PORT` | No | SMTP port | `587` |
+| `SMTP_SECURE` | No | Use TLS on connect | `false` |
+| `SMTP_USER` | For email reset | SMTP login email | `you@gmail.com` |
+| `SMTP_PASS` | For email reset | App password (no spaces) | `16-char-app-password` |
+| `SMTP_FROM` | No | From header | `Velora <you@gmail.com>` |
 | `UPLOAD_DIR` | No | Image upload folder | `./uploads` |
-| `MAX_FILE_SIZE` | No | Max upload size in bytes | `5242880` (5 MB) |
+| `MAX_FILE_SIZE` | No | Max upload size in bytes | `10485760` (10 MB) |
+| `AUTO_VERIFY_EMAIL` | No | Skip email verify in dev | `true` |
 
 **Example `backend/.env`:**
 
@@ -322,9 +348,29 @@ CLIENT_URL=http://localhost:5173
 MONGODB_URI=mongodb+srv://<user>:<password>@cluster0.xxxxx.mongodb.net/pulsechat?retryWrites=true&w=majority
 JWT_SECRET=your-long-random-secret-here
 JWT_EXPIRES_IN=7d
+JWT_REFRESH_EXPIRES_IN=30d
+APP_NAME=Velora
+
+# Gmail SMTP (for forgot-password emails)
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_SECURE=false
+SMTP_USER=your-gmail@gmail.com
+SMTP_PASS=your16charapppassword
+SMTP_FROM="Velora <your-gmail@gmail.com>"
+
 UPLOAD_DIR=./uploads
-MAX_FILE_SIZE=5242880
+MAX_FILE_SIZE=10485760
+AUTO_VERIFY_EMAIL=true
 ```
+
+#### SMTP setup (forgot password emails)
+
+1. Enable **2-Step Verification** on your Google account
+2. Create an **App Password** at [https://myaccount.google.com/apppasswords](https://myaccount.google.com/apppasswords)
+3. Add SMTP variables to `backend/.env` (password **without spaces**)
+4. Restart the backend — you should see: `[email] SMTP connection verified`
+5. Without SMTP, forgot-password runs in **demo mode** (reset link shown on screen only)
 
 > **Important:** Never commit `.env` to GitHub. Use `.env.example` as a template only.
 
@@ -334,6 +380,7 @@ MAX_FILE_SIZE=5242880
 |----------|----------|-------------|---------|
 | `VITE_API_URL` | No | Backend REST API URL | `http://localhost:3001` |
 | `VITE_SOCKET_URL` | No | Socket.io server URL | `http://localhost:3001` |
+| `VITE_GOOGLE_CLIENT_ID` | No | Google Sign-In client ID | — |
 
 **Example `frontend/.env` (local):**
 
@@ -386,7 +433,11 @@ CLIENT_URL=https://pulsechat-web.onrender.com
 - **Typing indicator** — start typing in an open chat
 - **Online status** — green dot on avatars when users are connected
 - **Read receipts** — checkmarks: sent → delivered → read
-- **Notifications** — receive a message in another conversation
+- **Notifications** — receive a message in another conversation (popup + sound)
+- **Voice/video call** — call button in a DM chat header
+- **Calls tab** — sidebar tab showing call history
+- **Contact profile** — click a name/avatar → view username, set custom name, delete chat
+- **Forgot password** — email reset link (requires SMTP)
 - **Image upload** — attach an image in the message input
 - **Sign out** — top-right button
 
@@ -400,6 +451,10 @@ CLIENT_URL=https://pulsechat-web.onrender.com
 |--------|----------|-------------|------|
 | `POST` | `/api/auth/register` | Create account | No |
 | `POST` | `/api/auth/login` | Sign in | No |
+| `POST` | `/api/auth/forgot-password` | Send password reset email | No |
+| `GET` | `/api/auth/verify-reset-token?token=` | Validate reset link | No |
+| `POST` | `/api/auth/reset-password` | Set new password from link | No |
+| `POST` | `/api/auth/google` | Google Sign-In | No |
 | `GET` | `/api/auth/me` | Get current user | Yes |
 
 ### Conversations (Rooms)
@@ -413,6 +468,9 @@ CLIENT_URL=https://pulsechat-web.onrender.com
 | `POST` | `/api/rooms/group` | Create group chat | Yes |
 | `GET` | `/api/rooms/users` | List all users | Yes |
 | `GET` | `/api/rooms/users/search?q=` | Search users | Yes |
+| `GET` | `/api/rooms/calls/history` | Call history | Yes |
+| `DELETE` | `/api/rooms/:roomId` | Delete chat for current user | Yes |
+| `PATCH` | `/api/rooms/:roomId/prefs` | Pin / mute / archive | Yes |
 
 ### Messages
 
@@ -450,6 +508,11 @@ CLIENT_URL=https://pulsechat-web.onrender.com
 | `message:read` | `{ roomId, messageId }` | Mark messages as read |
 | `typing:start` | `{ roomId }` | User started typing |
 | `typing:stop` | `{ roomId }` | User stopped typing |
+| `call:invite` | `{ toUserId, roomId, callType, offer }` | Start voice/video call |
+| `call:answer` | `{ toUserId, answer }` | Accept call |
+| `call:reject` | `{ toUserId }` | Decline call |
+| `call:ice` | `{ toUserId, candidate }` | WebRTC ICE candidate |
+| `call:end` | `{ toUserId }` | End call |
 
 ### Server → Client
 
@@ -464,6 +527,8 @@ CLIENT_URL=https://pulsechat-web.onrender.com
 | `room:new` | New conversation added for user |
 | `users:online` | Online users list changed |
 | `typing:start` / `typing:stop` | Typing indicators |
+| `call:incoming` / `call:answered` / `call:rejected` / `call:ended` | WebRTC call signaling |
+| `calls:updated` | Call history changed (refresh Calls tab) |
 | `notification:new` | New message notification |
 | `error` | Socket-level error message |
 
@@ -651,6 +716,16 @@ Get-NetTCPConnection -LocalPort 3001 | ForEach-Object { Stop-Process -Id $_.Owni
 - URL-encode special characters in password (`@` → `%40`)
 - In Atlas: **Network Access** → allow your IP (or `0.0.0.0/0` for dev)
 - Verify cluster is running
+
+### Password reset email not arriving
+
+- Restart backend after editing `backend/.env`
+- Look for `[email] SMTP connection verified` on startup (or `FAILED` with error)
+- Use a **Gmail App Password** (not your normal password); remove spaces from `SMTP_PASS`
+- No leading spaces in `SMTP_USER=your@gmail.com`
+- Check **Spam** folder
+- Without SMTP, use the **demo reset link** shown on screen or copy link from backend logs: `[password-reset] ... link=...`
+- Use the **same email** you registered with
 
 ### Messages not appearing live
 
