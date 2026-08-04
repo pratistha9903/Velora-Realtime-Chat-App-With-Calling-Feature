@@ -802,7 +802,11 @@ git push -u origin main
 ```
 
 ---
+## 📝 License & Attribution
 
-## License
+This project was built by **Pratistha Srivastava** as a portfolio project.
 
-MIT
+If you use this code, please provide attribution by linking back to this repository.
+
+📧 Contact: pratistha9903@gmail.com
+🔗 GitHub: https://github.com/pratistha9903
