@@ -9,7 +9,7 @@ A full-stack, premium real-time chat application (**Velora**) built with **React
 | Resource | URL |
 |----------|-----|
 | **Live Application** | [https://velora-web-6sxg.onrender.com](https://velora-web-6sxg.onrender.com)|
-| **GitHub Repository** | [https://github.com/pratistha9903/chat_app](https://github.com/pratistha9903/chat_app) |
+| **GitHub Repository** | [https://github.com/pratistha9903/Velora-Realtime-Chat-App-With-Calling-Feature](https://github.com/pratistha9903/Velora-Realtime-Chat-App-With-Calling-Feature) |
 | **Backend API (Render)** | Web Service — health check at `/api/health` on your Render backend URL |
 
 > Open the live app, register an account, and use a second browser (incognito) to test real-time chat between two users.
