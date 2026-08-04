@@ -8,7 +8,7 @@ A full-stack, premium real-time chat application (**Velora**) built with **React
 
 | Resource | URL |
 |----------|-----|
-| **Live Application** | [https://pulsechat-web.onrender.com](https://pulsechat-web.onrender.com) |
+| **Live Application** | ([https://velora-web-6sxg.onrender.com](https://velora-web-6sxg.onrender.com)|
 | **GitHub Repository** | [https://github.com/pratistha9903/chat_app](https://github.com/pratistha9903/chat_app) |
 | **Backend API (Render)** | Web Service — health check at `/api/health` on your Render backend URL |
 
@@ -696,7 +696,7 @@ VITE_SOCKET_URL=https://pulsechat-api.onrender.com
 | **Root Directory** | `frontend` |
 | **Build Command** | `npm install && npm run build` |
 | **Publish Directory** | `dist` |
-| **Live URL** | [https://pulsechat-web.onrender.com](https://pulsechat-web.onrender.com) |
+| **Live URL** | [https://velora-web-6sxg.onrender.com](https://velora-web-6sxg.onrender.com) |
 
 ```bash
 cd frontend
@@ -715,7 +715,7 @@ This project is submitted as a **React web application** (not React Native).
 |-------------|--------|
 | GitHub repository | [https://github.com/pratistha9903/chat_app](https://github.com/pratistha9903/chat_app) |
 | README with setup | This file |
-| **Live website (Render)** | [https://pulsechat-web.onrender.com](https://pulsechat-web.onrender.com) |
+| **Live website (Render)** | [https://velora-web-6sxg.onrender.com](https://velora-web-6sxg.onrender.com)|
 | APK | Not applicable (React web app) |
 | Screen recording | To be uploaded to Google Drive |
 | Live API (bonus) | Backend deployed on Render |
