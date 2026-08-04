@@ -2,8 +2,6 @@
 
 A full-stack, premium real-time chat application (**Velora**) built with **React**, **Node.js**, **Express**, **Socket.io**, and **MongoDB**. Multiple users can connect at the same time, chat live, make voice/video calls, and see message history after refresh.
 
-> **Note:** The UI brand is **Velora**. Some deployment URLs and database names may still use the original **PulseChat** naming.
-
 ## Live Demo (Deployed on Render)
 
 | Resource | URL |
@@ -12,7 +10,6 @@ A full-stack, premium real-time chat application (**Velora**) built with **React
 | **GitHub Repository** | [https://github.com/pratistha9903/Velora-Realtime-Chat-App-With-Calling-Feature](https://github.com/pratistha9903/Velora-Realtime-Chat-App-With-Calling-Feature) |
 | **Backend API (Render)** | Web Service — health check at `/api/health` on your Render backend URL |
 
-> Open the live app, register an account, and use a second browser (incognito) to test real-time chat between two users.
 
 ---
 ## Demo Video
