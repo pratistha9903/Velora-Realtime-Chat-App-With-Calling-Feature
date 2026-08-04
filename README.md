@@ -6,9 +6,9 @@ A full-stack, premium real-time chat application (**Velora**) built with **React
 
 | Resource | URL |
 |----------|-----|
-| **Live Application** | [https://velora-web-6sxg.onrender.com](https://velora-web-6sxg.onrender.com)|
+| **Live Application** | [https://velora-web-6sxg.onrender.com](https://velora-web-6sxg.onrender.com) |
+| **Backend API** | [https://velora-api-a5sy.onrender.com](https://velora-api-a5sy.onrender.com) |
 | **GitHub Repository** | [https://github.com/pratistha9903/Velora-Realtime-Chat-App-With-Calling-Feature](https://github.com/pratistha9903/Velora-Realtime-Chat-App-With-Calling-Feature) |
-| **Backend API (Render)** | Web Service — health check at `/api/health` on your Render backend URL |
 
 
 ---
@@ -120,6 +120,7 @@ The application follows the assignment requirement of using **Socket.io** for re
 | **Show/hide password** on auth forms | ✅ |
 | **Secure password reset via email link** | ✅ |
 | **Optimistic UI** (pin / mute / archive) | ✅ |
+| **Direct message by @username** | ✅ |
 
 ---
 
@@ -181,6 +182,7 @@ realtime-chat-app/
 │   │   │   └── useSocket.js        # Socket.io client hook
 │   │   ├── utils/
 │   │   │   ├── audio.js            # Message chimes + call ringtones (autoplay unlock)
+│   │   │   ├── webrtc.js           # ICE/TURN config for video calls in production
 │   │   │   └── conversations.js    # Chat list sorting helpers
 │   │   ├── services/
 │   │   │   └── api.js              # REST API client
@@ -385,6 +387,10 @@ AUTO_VERIFY_EMAIL=true
 | `VITE_API_URL` | No | Backend REST API URL | `http://localhost:3001` |
 | `VITE_SOCKET_URL` | No | Socket.io server URL | `http://localhost:3001` |
 | `VITE_GOOGLE_CLIENT_ID` | No | Google Sign-In client ID | — |
+| `VITE_TURN_URL` | No | Custom TURN server (better video calls in prod) | `turn:…` |
+| `VITE_TURN_USERNAME` | No | TURN username | — |
+| `VITE_TURN_CREDENTIAL` | No | TURN password | — |
+| `VITE_ICE_SERVERS` | No | Full ICE config as JSON (overrides defaults) | — |
 
 **Example `frontend/.env` (local):**
 
@@ -393,18 +399,21 @@ VITE_API_URL=http://localhost:3001
 VITE_SOCKET_URL=http://localhost:3001
 ```
 
-**Production (Render)** — frontend is deployed at [https://pulsechat-web.onrender.com](https://pulsechat-web.onrender.com). Set these in the Render **Static Site** environment before build:
+**Production (Render)** — set these in the Render **Static Site** environment **before** build:
 
 ```env
-VITE_API_URL=https://<your-backend-service>.onrender.com
-VITE_SOCKET_URL=https://<your-backend-service>.onrender.com
+VITE_API_URL=https://velora-api-a5sy.onrender.com
+VITE_SOCKET_URL=https://velora-api-a5sy.onrender.com
+VITE_GOOGLE_CLIENT_ID=your-google-client-id.apps.googleusercontent.com
 ```
 
 On the backend Render service, set:
 
 ```env
-CLIENT_URL=https://pulsechat-web.onrender.com
+CLIENT_URL=https://velora-web-6sxg.onrender.com
 ```
+
+> `CLIENT_URL` must be your **frontend** URL (not the API URL). Redeploy frontend after changing any `VITE_*` variable.
 
 ---
 
@@ -441,6 +450,7 @@ CLIENT_URL=https://pulsechat-web.onrender.com
 - **Voice/video call** — call button in a DM chat header; incoming calls play a ringtone until you accept or decline
 - **Calls tab** — sidebar tab showing call history
 - **Contact profile** — click a name/avatar → view username, set custom name, delete chat
+- **Direct message** — click **+ New Chat** → enter `@username` and a message → Send
 - **Forgot password** — email reset link (requires SMTP)
 - **Pin / mute / archive** — right-click or use chat header actions; mute disables sound for that chat
 - **Image upload** — attach an image in the message input
@@ -490,7 +500,8 @@ Velora plays sounds for:
 | `POST` | `/api/rooms/dm/:userId` | Start or get private chat | Yes |
 | `POST` | `/api/rooms/group` | Create group chat | Yes |
 | `GET` | `/api/rooms/users` | List all users | Yes |
-| `GET` | `/api/rooms/users/search?q=` | Search users | Yes |
+| `GET` | `/api/rooms/users/search?q=` | Search users (name, username, email) | Yes |
+| `GET` | `/api/rooms/users/lookup?username=` | Exact username lookup for direct message | Yes |
 | `GET` | `/api/rooms/calls/history` | Call history | Yes |
 | `DELETE` | `/api/rooms/:roomId` | Delete chat for current user | Yes |
 | `PATCH` | `/api/rooms/:roomId/prefs` | Pin / mute / archive | Yes |
@@ -618,6 +629,10 @@ Code is split into **routes** (HTTP), **sockets** (real-time), **models** (schem
 
 Browsers require a user gesture before playing sound. Velora uses a **single shared `AudioContext`** (`frontend/src/utils/audio.js`) that unlocks on the first click, tap, or key press after load. Message chimes and call ringtones reuse this context so notifications work reliably after sign-in.
 
+### 10. WebRTC + TURN for deployed video calls
+
+Video calls work locally with STUN alone, but **deployed users on different networks** need **TURN relay** servers. Velora configures ICE in `frontend/src/utils/webrtc.js` with public TURN fallback and optional `VITE_TURN_*` env vars for production.
+
 ---
 
 ## Assumptions
@@ -648,11 +663,11 @@ Browsers require a user gesture before playing sound. Velora uses a **single sha
 
 ### Deployed URLs
 
-| Service | Platform | URL | Status |
-|---------|----------|-----|--------|
-| Frontend (Static Site) | Render | [https://pulsechat-web.onrender.com](https://pulsechat-web.onrender.com) | ✅ Live |
-| Backend (Web Service) | Render | Your `pulsechat-api` (or similar) service URL | ✅ Deployed |
-| Database | MongoDB Atlas | `pulsechat` database | ✅ Connected |
+| Service | Platform | URL |
+|---------|----------|-----|
+| Frontend (Static Site) | Render | [https://velora-web-6sxg.onrender.com](https://velora-web-6sxg.onrender.com) |
+| Backend (Web Service) | Render | [https://velora-api-a5sy.onrender.com](https://velora-api-a5sy.onrender.com) |
+| Database | MongoDB Atlas | `pulsechat` (or your DB name) |
 
 **Render dashboard:** [https://dashboard.render.com](https://dashboard.render.com)
 
@@ -674,19 +689,20 @@ Browsers require a user gesture before playing sound. Velora uses a **single sha
 | `PORT` | `3001` (or leave Render default) |
 | `MONGODB_URI` | Your Atlas connection string |
 | `JWT_SECRET` | A long random secret |
-| `CLIENT_URL` | `https://pulsechat-web.onrender.com` |
+| `CLIENT_URL` | `https://velora-web-6sxg.onrender.com` |
 | `NODE_ENV` | `production` |
 
-6. Deploy and copy the live backend URL (e.g. `https://pulsechat-api.onrender.com`)
+6. Deploy and copy your backend URL (e.g. `https://velora-api-a5sy.onrender.com`)
 
-7. Set frontend Render environment variables and redeploy:
+7. Set frontend Render environment variables and **redeploy**:
 
 ```env
-VITE_API_URL=https://pulsechat-api.onrender.com
-VITE_SOCKET_URL=https://pulsechat-api.onrender.com
+VITE_API_URL=https://velora-api-a5sy.onrender.com
+VITE_SOCKET_URL=https://velora-api-a5sy.onrender.com
+VITE_GOOGLE_CLIENT_ID=your-client-id.apps.googleusercontent.com
 ```
 
-### Deploy frontend on Render (Static Site) — ✅ Done
+### Deploy frontend on Render (Static Site)
 
 | Setting | Value |
 |---------|-------|
@@ -694,6 +710,17 @@ VITE_SOCKET_URL=https://pulsechat-api.onrender.com
 | **Build Command** | `npm install && npm run build` |
 | **Publish Directory** | `dist` |
 | **Live URL** | [https://velora-web-6sxg.onrender.com](https://velora-web-6sxg.onrender.com) |
+
+### Google Sign-In on Render
+
+In [Google Cloud Console](https://console.cloud.google.com/) → **Credentials** → your OAuth client → **Authorized JavaScript origins**, add:
+
+```
+https://velora-web-6sxg.onrender.com
+http://localhost:5173
+```
+
+(No trailing slash. This fixes `Error 400: origin_mismatch`.)
 
 ```bash
 cd frontend
@@ -712,7 +739,7 @@ This project is submitted as a **React web application** (not React Native).
 |-------------|--------|
 | GitHub repository | [https://github.com/pratistha9903/chat_app](https://github.com/pratistha9903/chat_app) |
 | README with setup | This file |
-| **Live website (Render)** | [https://velora-web-6sxg.onrender.com](https://velora-web-6sxg.onrender.com)|
+| **Live website (Render)** | [https://velora-web-6sxg.onrender.com](https://velora-web-6sxg.onrender.com) |
 | APK | Not applicable (React web app) |
 | Screen recording | To be uploaded to Google Drive |
 | Live API (bonus) | Backend deployed on Render |
@@ -720,7 +747,7 @@ This project is submitted as a **React web application** (not React Native).
 ### Suggested screen recording flow
 
 1. Show GitHub repo
-2. Open live app: [https://pulsechat-web.onrender.com](https://pulsechat-web.onrender.com)
+2. Open live app: [https://velora-web-6sxg.onrender.com](https://velora-web-6sxg.onrender.com)
 3. Register two users (incognito)
 4. Start private chat and send messages live
 5. Show typing indicator and online status
@@ -773,6 +800,25 @@ Get-NetTCPConnection -LocalPort 3001 | ForEach-Object { Stop-Process -Id $_.Owni
 - For calls, allow **microphone/camera** permissions when prompted
 - Hard refresh: `Ctrl+Shift+R` (Windows) or `Cmd+Shift+R` (Mac)
 
+### Video call stuck on “Connecting…” (black screen)
+
+- **Redeploy frontend** after pulling latest code (WebRTC/TURN fixes)
+- Set backend `CLIENT_URL` to your **frontend** URL exactly (e.g. `https://velora-web-6sxg.onrender.com`)
+- Both users: allow **camera + microphone** in the browser
+- Confirm **Live** badge is green before calling
+- Use **Chrome** for best WebRTC support
+- For reliable production video, add custom TURN via `VITE_TURN_URL`, `VITE_TURN_USERNAME`, `VITE_TURN_CREDENTIAL` on Render frontend, then redeploy
+
+### Google Sign-In: `Error 400: origin_mismatch`
+
+Add your **frontend** Render URL (not the API URL) to Google Cloud Console → **Authorized JavaScript origins**:
+
+```
+https://velora-web-6sxg.onrender.com
+```
+
+Also add `http://localhost:5173` for local dev. Wait 2–5 minutes after saving.
+
 ### Google Sign-In popup still shows "Pulse Chat"
 
 The name in Google’s OAuth popup is set in **Google Cloud Console**, not in this repo:
@@ -784,7 +830,7 @@ The name in Google’s OAuth popup is set in **Google Cloud Console**, not in th
 
 ### CORS errors
 
-- Set `CLIENT_URL` on the Render backend to `https://pulsechat-web.onrender.com` (no trailing slash)
+- Set `CLIENT_URL` on the Render backend to your frontend URL, e.g. `https://velora-web-6sxg.onrender.com` (no trailing slash)
 - Redeploy backend after changing environment variables
 
 ### Session expired on load
