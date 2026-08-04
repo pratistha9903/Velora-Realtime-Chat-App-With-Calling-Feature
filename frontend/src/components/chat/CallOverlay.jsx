@@ -5,7 +5,7 @@ import {
 import Avatar from '../ui/Avatar';
 import { APP_NAME } from '../../config/brand';
 import { startCallRingtone, stopCallRingtone, playDeclineTone } from '../../utils/audio';
-import { getRtcConfiguration } from '../../utils/webrtc';
+import { getRtcConfiguration, waitForIceGathering, getOfferAnswerConstraints } from '../../utils/webrtc';
 
 function showCallNotification(title, body) {
   try {
@@ -78,6 +78,7 @@ export default function CallOverlay({
   const bindRemoteMedia = useCallback((stream) => {
     if (remoteVideoRef.current) {
       remoteVideoRef.current.srcObject = stream;
+      // Muted on video element — audio plays through remoteAudioRef (autoplay-friendly)
       remoteVideoRef.current.play?.().catch(() => {});
     }
     if (remoteAudioRef.current) {
@@ -85,6 +86,29 @@ export default function CallOverlay({
       remoteAudioRef.current.play?.().catch(() => {});
     }
   }, []);
+
+  const syncRemoteTracks = useCallback((pc) => {
+    if (!pc) return false;
+    let stream = remoteStreamRef.current;
+    if (!stream) stream = new MediaStream();
+
+    let changed = false;
+    pc.getReceivers().forEach((receiver) => {
+      const { track } = receiver;
+      if (track && track.readyState === 'live' && !stream.getTracks().some((t) => t.id === track.id)) {
+        stream.addTrack(track);
+        changed = true;
+      }
+    });
+
+    if (stream.getTracks().length > 0) {
+      remoteStreamRef.current = stream;
+      bindRemoteMedia(stream);
+      setStatus('connected');
+      return true;
+    }
+    return changed;
+  }, [bindRemoteMedia]);
 
   const attachRemoteTrack = useCallback((ev) => {
     let stream = remoteStreamRef.current;
@@ -251,7 +275,11 @@ export default function CallOverlay({
     pc.ontrack = attachRemoteTrack;
 
     pc.oniceconnectionstatechange = () => {
-      if (pc.iceConnectionState === 'failed') {
+      const state = pc.iceConnectionState;
+      if (state === 'connected' || state === 'completed') {
+        syncRemoteTracks(pc);
+      }
+      if (state === 'failed') {
         try {
           pc.restartIce();
         } catch {
@@ -261,13 +289,16 @@ export default function CallOverlay({
     };
 
     pc.onconnectionstatechange = () => {
+      if (pc.connectionState === 'connected') {
+        syncRemoteTracks(pc);
+      }
       if (pc.connectionState === 'failed') {
         showResultScreen('failed');
       }
     };
 
     return pc;
-  }, [attachRemoteTrack, emit, showResultScreen]);
+  }, [attachRemoteTrack, emit, showResultScreen, syncRemoteTracks]);
 
   const getMedia = useCallback(async (callType) => {
     const stream = await navigator.mediaDevices.getUserMedia({
@@ -307,13 +338,13 @@ export default function CallOverlay({
       const stream = await getMedia(callType);
       const pc = createPeerConnection(peer.id);
       stream.getTracks().forEach((track) => pc.addTrack(track, stream));
-      const offer = await pc.createOffer();
-      await pc.setLocalDescription(offer);
+      await pc.setLocalDescription(await pc.createOffer(getOfferAnswerConstraints(callType)));
+      await waitForIceGathering(pc);
       emit('call:invite', {
         toUserId: String(peer.id),
         roomId,
         callType,
-        offer,
+        offer: pc.localDescription,
         from: {
           id: user.id,
           displayName: user.displayName,
@@ -367,16 +398,17 @@ export default function CallOverlay({
       stream.getTracks().forEach((track) => pc.addTrack(track, stream));
       await pc.setRemoteDescription(new RTCSessionDescription(offer));
       await flushIceQueue(pc);
-      const answer = await pc.createAnswer();
-      await pc.setLocalDescription(answer);
-      emit('call:answer', { toUserId: String(from.id), answer });
+      syncRemoteTracks(pc);
+      await pc.setLocalDescription(await pc.createAnswer(getOfferAnswerConstraints(callType)));
+      await waitForIceGathering(pc);
+      emit('call:answer', { toUserId: String(from.id), answer: pc.localDescription });
       setStatus('connecting');
     } catch (err) {
       addToast?.(err.message || 'Could not answer call', 'error');
       emit('call:reject', { toUserId: String(incoming.from.id) });
       cleanup();
     }
-  }, [incoming, getMedia, createPeerConnection, emit, addToast, cleanup, stopRing, flushIceQueue]);
+  }, [incoming, getMedia, createPeerConnection, emit, addToast, cleanup, stopRing, flushIceQueue, syncRemoteTracks]);
 
   const rejectIncoming = useCallback(() => {
     if (!incoming) return;
@@ -413,6 +445,7 @@ export default function CallOverlay({
         if (pcRef.current && answer) {
           await pcRef.current.setRemoteDescription(new RTCSessionDescription(answer));
           await flushIceQueue(pcRef.current);
+          syncRemoteTracks(pcRef.current);
           setStatus('connecting');
         }
       } catch {
@@ -444,7 +477,24 @@ export default function CallOverlay({
     }));
 
     return () => offs.forEach((fn) => fn?.());
-  }, [on, emit, stopRing, showResultScreen, addIceCandidateSafe, flushIceQueue]);
+  }, [on, emit, stopRing, showResultScreen, addIceCandidateSafe, flushIceQueue, syncRemoteTracks]);
+
+  // While connecting, keep trying to attach remote media (handles slow ICE on Render)
+  useEffect(() => {
+    if (status !== 'connecting' || !pcRef.current) return undefined;
+    const interval = setInterval(() => {
+      if (pcRef.current) syncRemoteTracks(pcRef.current);
+    }, 1500);
+    const timeout = setTimeout(() => {
+      if (status === 'connecting') {
+        addToast?.('Still connecting — check camera permissions on both sides', 'info');
+      }
+    }, 20000);
+    return () => {
+      clearInterval(interval);
+      clearTimeout(timeout);
+    };
+  }, [status, syncRemoteTracks, addToast]);
 
   useEffect(() => {
     if (localVideoRef.current && localStreamRef.current) {
@@ -598,7 +648,7 @@ export default function CallOverlay({
       <div className="call-stage">
         {isVideo ? (
           <>
-            <video ref={remoteVideoRef} className="call-remote" autoPlay playsInline muted={false} />
+            <video ref={remoteVideoRef} className="call-remote" autoPlay playsInline muted />
             <video ref={localVideoRef} className="call-local" autoPlay playsInline muted />
           </>
         ) : (
