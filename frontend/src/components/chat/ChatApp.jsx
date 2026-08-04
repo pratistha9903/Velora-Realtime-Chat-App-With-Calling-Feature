@@ -80,8 +80,9 @@ export default function ChatApp() {
   }, [activeRoom]);
 
   useEffect(() => {
-    if (connected && activeRoomRef.current) {
-      joinRoom(activeRoomRef.current);
+    if (connected) {
+      conversationsRef.current.forEach((room) => joinRoom(room.id));
+      if (activeRoomRef.current) joinRoom(activeRoomRef.current);
     }
   }, [connected, joinRoom]);
 
@@ -350,8 +351,11 @@ export default function ChatApp() {
     }));
 
     cleanups.push(on('notification:new', (notif) => {
-      // Skip noisy toast duplicate — banner + sound come from addNotification
-      if (notif.type === 'incoming_call') return;
+      if (notif.type === 'incoming_call') {
+        // CallOverlay handles ringtone; still show banner if user missed call:incoming
+        addNotification({ ...notif, playSound: false });
+        return;
+      }
       addNotification(notif);
     }));
 
@@ -478,12 +482,17 @@ export default function ChatApp() {
     addToast(`Group "${room.name}" created`, 'success');
   };
 
-  const handleChatCreated = (room) => {
+  const handleChatCreated = async (room, initialMessage) => {
     setConversations((prev) => {
       if (prev.some((r) => r.id === room.id)) return prev;
       return [room, ...prev];
     });
-    selectRoom(room);
+    await selectRoom(room);
+    const text = initialMessage?.trim();
+    if (text) {
+      sendMessage(room.id, text);
+      addToast('Message sent', 'success');
+    }
   };
 
   const handleNotificationSelect = (conversationId) => {

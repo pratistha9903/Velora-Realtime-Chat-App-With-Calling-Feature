@@ -5,13 +5,7 @@ import {
 import Avatar from '../ui/Avatar';
 import { APP_NAME } from '../../config/brand';
 import { startCallRingtone, stopCallRingtone, playDeclineTone } from '../../utils/audio';
-
-const ICE_SERVERS = {
-  iceServers: [
-    { urls: 'stun:stun.l.google.com:19302' },
-    { urls: 'stun:stun1.l.google.com:19302' },
-  ],
-};
+import { getRtcConfiguration } from '../../utils/webrtc';
 
 function showCallNotification(title, body) {
   try {
@@ -79,6 +73,57 @@ export default function CallOverlay({
   const startedAtRef = useRef(null);
   const callSnapshotRef = useRef(null);
   const resultRef = useRef(null);
+  const iceQueueRef = useRef([]);
+
+  const bindRemoteMedia = useCallback((stream) => {
+    if (remoteVideoRef.current) {
+      remoteVideoRef.current.srcObject = stream;
+      remoteVideoRef.current.play?.().catch(() => {});
+    }
+    if (remoteAudioRef.current) {
+      remoteAudioRef.current.srcObject = stream;
+      remoteAudioRef.current.play?.().catch(() => {});
+    }
+  }, []);
+
+  const attachRemoteTrack = useCallback((ev) => {
+    let stream = remoteStreamRef.current;
+    if (!stream) {
+      stream = ev.streams?.[0] || new MediaStream();
+      remoteStreamRef.current = stream;
+    }
+    if (ev.track && !stream.getTracks().some((t) => t.id === ev.track.id)) {
+      stream.addTrack(ev.track);
+    }
+    bindRemoteMedia(stream);
+    setStatus('connected');
+  }, [bindRemoteMedia]);
+
+  const flushIceQueue = useCallback(async (pc) => {
+    const queued = iceQueueRef.current;
+    iceQueueRef.current = [];
+    for (const candidate of queued) {
+      try {
+        await pc.addIceCandidate(new RTCIceCandidate(candidate));
+      } catch {
+        /* ignore stale candidates */
+      }
+    }
+  }, []);
+
+  const addIceCandidateSafe = useCallback(async (candidate) => {
+    const pc = pcRef.current;
+    if (!pc || !candidate) return;
+    if (!pc.remoteDescription) {
+      iceQueueRef.current.push(candidate);
+      return;
+    }
+    try {
+      await pc.addIceCandidate(new RTCIceCandidate(candidate));
+    } catch {
+      /* ignore */
+    }
+  }, []);
 
   useEffect(() => {
     resultRef.current = result;
@@ -98,6 +143,7 @@ export default function CallOverlay({
     localStreamRef.current?.getTracks().forEach((t) => t.stop());
     localStreamRef.current = null;
     remoteStreamRef.current = null;
+    iceQueueRef.current = [];
     if (localVideoRef.current) localVideoRef.current.srcObject = null;
     if (remoteVideoRef.current) remoteVideoRef.current.srcObject = null;
     if (remoteAudioRef.current) remoteAudioRef.current.srcObject = null;
@@ -191,9 +237,10 @@ export default function CallOverlay({
   }, [cleanup, emit, showResultScreen]);
 
   const createPeerConnection = useCallback((toUserId) => {
-    const pc = new RTCPeerConnection(ICE_SERVERS);
+    const pc = new RTCPeerConnection(getRtcConfiguration());
     pcRef.current = pc;
     peerIdRef.current = String(toUserId);
+    iceQueueRef.current = [];
 
     pc.onicecandidate = (ev) => {
       if (ev.candidate) {
@@ -201,12 +248,16 @@ export default function CallOverlay({
       }
     };
 
-    pc.ontrack = (ev) => {
-      const stream = ev.streams[0] || new MediaStream([ev.track]);
-      remoteStreamRef.current = stream;
-      if (remoteVideoRef.current) remoteVideoRef.current.srcObject = stream;
-      if (remoteAudioRef.current) remoteAudioRef.current.srcObject = stream;
-      setStatus('connected');
+    pc.ontrack = attachRemoteTrack;
+
+    pc.oniceconnectionstatechange = () => {
+      if (pc.iceConnectionState === 'failed') {
+        try {
+          pc.restartIce();
+        } catch {
+          showResultScreen('failed');
+        }
+      }
     };
 
     pc.onconnectionstatechange = () => {
@@ -216,7 +267,7 @@ export default function CallOverlay({
     };
 
     return pc;
-  }, [emit, showResultScreen]);
+  }, [attachRemoteTrack, emit, showResultScreen]);
 
   const getMedia = useCallback(async (callType) => {
     const stream = await navigator.mediaDevices.getUserMedia({
@@ -315,16 +366,17 @@ export default function CallOverlay({
       const pc = createPeerConnection(from.id);
       stream.getTracks().forEach((track) => pc.addTrack(track, stream));
       await pc.setRemoteDescription(new RTCSessionDescription(offer));
+      await flushIceQueue(pc);
       const answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);
       emit('call:answer', { toUserId: String(from.id), answer });
-      setStatus('connected');
+      setStatus('connecting');
     } catch (err) {
       addToast?.(err.message || 'Could not answer call', 'error');
       emit('call:reject', { toUserId: String(incoming.from.id) });
       cleanup();
     }
-  }, [incoming, getMedia, createPeerConnection, emit, addToast, cleanup, stopRing]);
+  }, [incoming, getMedia, createPeerConnection, emit, addToast, cleanup, stopRing, flushIceQueue]);
 
   const rejectIncoming = useCallback(() => {
     if (!incoming) return;
@@ -360,7 +412,8 @@ export default function CallOverlay({
         startedAtRef.current = new Date();
         if (pcRef.current && answer) {
           await pcRef.current.setRemoteDescription(new RTCSessionDescription(answer));
-          setStatus('connected');
+          await flushIceQueue(pcRef.current);
+          setStatus('connecting');
         }
       } catch {
         showResultScreen('failed');
@@ -376,11 +429,7 @@ export default function CallOverlay({
     }));
 
     offs.push(on('call:ice', async ({ candidate }) => {
-      try {
-        if (pcRef.current && candidate) {
-          await pcRef.current.addIceCandidate(new RTCIceCandidate(candidate));
-        }
-      } catch { /* ignore */ }
+      await addIceCandidateSafe(candidate);
     }));
 
     offs.push(on('call:ended', ({ reason } = {}) => {
@@ -395,7 +444,7 @@ export default function CallOverlay({
     }));
 
     return () => offs.forEach((fn) => fn?.());
-  }, [on, emit, stopRing, showResultScreen]);
+  }, [on, emit, stopRing, showResultScreen, addIceCandidateSafe, flushIceQueue]);
 
   useEffect(() => {
     if (localVideoRef.current && localStreamRef.current) {
@@ -403,6 +452,7 @@ export default function CallOverlay({
     }
     if (remoteVideoRef.current && remoteStreamRef.current) {
       remoteVideoRef.current.srcObject = remoteStreamRef.current;
+      remoteVideoRef.current.play?.().catch(() => {});
     }
     if (remoteAudioRef.current && remoteStreamRef.current) {
       remoteAudioRef.current.srcObject = remoteStreamRef.current;
@@ -548,7 +598,7 @@ export default function CallOverlay({
       <div className="call-stage">
         {isVideo ? (
           <>
-            <video ref={remoteVideoRef} className="call-remote" autoPlay playsInline />
+            <video ref={remoteVideoRef} className="call-remote" autoPlay playsInline muted={false} />
             <video ref={localVideoRef} className="call-local" autoPlay playsInline muted />
           </>
         ) : (

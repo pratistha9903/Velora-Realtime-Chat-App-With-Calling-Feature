@@ -16,6 +16,7 @@ export function NotificationProvider({ children }) {
   const [banner, setBanner] = useState(null);
   const bannerTimer = useRef(null);
   const onOpenRef = useRef(null);
+  const recentKeys = useRef(new Set());
 
   const requestPermission = useCallback(async () => {
     if (typeof Notification === 'undefined') return 'denied';
@@ -39,6 +40,18 @@ export function NotificationProvider({ children }) {
   }, []);
 
   const addNotification = useCallback((notification, { silent = false } = {}) => {
+    const dedupeKey = notification.message?.id
+      ? `msg-${notification.message.id}`
+      : notification.type === 'incoming_call'
+        ? `call-${notification.conversationId || 'x'}-${notification.timestamp || ''}`
+        : null;
+
+    if (dedupeKey) {
+      if (recentKeys.current.has(dedupeKey)) return;
+      recentKeys.current.add(dedupeKey);
+      setTimeout(() => recentKeys.current.delete(dedupeKey), 4000);
+    }
+
     const item = {
       ...notification,
       id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,

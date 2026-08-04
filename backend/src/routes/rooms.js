@@ -8,6 +8,7 @@ import {
   getRoomMembers,
   getAllUsers,
   searchUsers,
+  lookupUserByUsername,
   updateConversationPrefs,
   addGroupMembers,
   removeGroupMember,
@@ -34,6 +35,22 @@ router.get('/users', async (req, res, next) => {
   try {
     const users = await getAllUsers(req.user.id);
     res.json({ success: true, data: users });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get('/users/lookup', async (req, res, next) => {
+  try {
+    const username = req.query.username?.trim();
+    if (!username) {
+      return res.status(400).json({ success: false, error: 'Username is required' });
+    }
+    const user = await lookupUserByUsername(username, req.user.id);
+    if (!user) {
+      return res.status(404).json({ success: false, error: 'User not found' });
+    }
+    res.json({ success: true, data: user });
   } catch (error) {
     next(error);
   }

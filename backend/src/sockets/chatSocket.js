@@ -416,6 +416,7 @@ export function setupChatSocket(io) {
         body: `${call.callerName} is ${type === 'video' ? 'video' : 'voice'} calling you`,
         conversationId: call.roomId,
         timestamp: new Date().toISOString(),
+        playSound: true,
       });
 
       if (!delivered) {

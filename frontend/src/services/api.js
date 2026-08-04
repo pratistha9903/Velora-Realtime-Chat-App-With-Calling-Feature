@@ -138,6 +138,8 @@ export const api = {
     }),
   getRoomMembers: (id) => request(`/api/rooms/${id}/members`),
   getUsers: () => request('/api/rooms/users'),
+  lookupUser: (username) =>
+    request(`/api/rooms/users/lookup?username=${encodeURIComponent(username)}`),
   searchUsers: (q) => request(`/api/rooms/users/search?q=${encodeURIComponent(q)}`),
 
   getMessages: (roomId, params = {}) => {

@@ -221,12 +221,33 @@ export async function updateLastSeen(userId) {
   await User.findByIdAndUpdate(userId, { lastSeen: new Date() });
 }
 
+export async function lookupUserByUsername(username, excludeUserId) {
+  const normalized = String(username || '').trim().toLowerCase().replace(/^@/, '');
+  if (!normalized) return null;
+
+  const user = await User.findOne({ username: normalized }).lean();
+  if (!user || user._id.toString() === String(excludeUserId)) return null;
+
+  return {
+    id: user._id.toString(),
+    username: user.username,
+    displayName: user.displayName,
+    avatarColor: user.avatarColor,
+    avatarUrl: user.avatarUrl,
+    lastSeen: user.lastSeen,
+  };
+}
+
 export async function searchUsers(query, excludeUserId, limit = 20) {
+  const trimmed = String(query || '').trim();
+  if (!trimmed) return [];
+
   const users = await User.find({
     _id: { $ne: excludeUserId },
     $or: [
-      { username: { $regex: query, $options: 'i' } },
-      { displayName: { $regex: query, $options: 'i' } },
+      { username: { $regex: trimmed, $options: 'i' } },
+      { displayName: { $regex: trimmed, $options: 'i' } },
+      { email: { $regex: trimmed, $options: 'i' } },
     ],
   }).limit(limit).lean();
 
