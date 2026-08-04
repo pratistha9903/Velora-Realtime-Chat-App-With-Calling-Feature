@@ -17,7 +17,7 @@ A full-stack, premium real-time chat application (**Velora**) built with **React
 ---
 ## Demo Video
 
-https://github.com/user-attachments/assets/235eb108-585c-401f-848d-7457a6bf661b
+https://github.com/user-attachments/assets/48420d37-e4e8-47c1-88f0-c5e05e4edd42
 
 ---
 
