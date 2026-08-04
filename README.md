@@ -8,7 +8,7 @@ A full-stack, premium real-time chat application (**Velora**) built with **React
 
 | Resource | URL |
 |----------|-----|
-| **Live Application** | ([https://velora-web-6sxg.onrender.com](https://velora-web-6sxg.onrender.com)|
+| **Live Application** | [https://velora-web-6sxg.onrender.com](https://velora-web-6sxg.onrender.com)|
 | **GitHub Repository** | [https://github.com/pratistha9903/chat_app](https://github.com/pratistha9903/chat_app) |
 | **Backend API (Render)** | Web Service — health check at `/api/health` on your Render backend URL |
 
