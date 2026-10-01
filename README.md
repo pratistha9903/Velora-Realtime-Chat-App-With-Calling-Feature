@@ -29,15 +29,16 @@ https://github.com/user-attachments/assets/48420d37-e4e8-47c1-88f0-c5e05e4edd42
 7. [Running the Backend](#running-the-backend)
 8. [Running the Frontend](#running-the-frontend)
 9. [Environment Variables](#environment-variables)
-10. [How to Use the Application](#how-to-use-the-application)
-11. [REST API Endpoints](#rest-api-endpoints)
-12. [Socket.io Events](#socketio-events)
-13. [Design Decisions](#design-decisions)
-14. [Assumptions](#assumptions)
-15. [Deployment (Render)](#deployment-render)
-16. [Submission Notes](#submission-notes)
-17. [Troubleshooting](#troubleshooting)
-18. [License](#license)
+10. [n8n — Email alerts for new messages (optional)](#n8n--email-alerts-for-new-messages-optional)
+11. [How to Use the Application](#how-to-use-the-application)
+12. [REST API Endpoints](#rest-api-endpoints)
+13. [Socket.io Events](#socketio-events)
+14. [Design Decisions](#design-decisions)
+15. [Assumptions](#assumptions)
+16. [Deployment (Render)](#deployment-render)
+17. [Submission Notes](#submission-notes)
+18. [Troubleshooting](#troubleshooting)
+19. [License](#license)
 
 ---
 
@@ -55,6 +56,7 @@ Velora is a real-time messaging platform where users can:
 - View **previous chat history** stored in MongoDB
 - See **online/offline status**, **typing indicators**, and **read/delivered receipts**
 - Hear **message chimes** and **call ringtones** for incoming activity (respects muted chats)
+- Optionally receive **email alerts** when someone sends you a message (via **n8n** → Gmail — see [n8n setup](#n8n--email-alerts-for-new-messages-optional))
 
 The application follows the assignment requirement of using **Socket.io** for real-time communication (not polling or third-party realtime services).
 
@@ -121,6 +123,8 @@ The application follows the assignment requirement of using **Socket.io** for re
 | **Secure password reset via email link** | ✅ |
 | **Optimistic UI** (pin / mute / archive) | ✅ |
 | **Direct message by @username** | ✅ |
+| **Contact profile with email** (shared chats only) | ✅ |
+| **n8n webhook → Gmail** for new message email alerts | ✅ (optional) |
 
 ---
 
@@ -134,6 +138,7 @@ The application follows the assignment requirement of using **Socket.io** for re
 | Authentication | JWT + bcrypt |
 | File Upload | Multer |
 | Security | Helmet, express-rate-limit, CORS |
+| Automation (optional) | [n8n](https://n8n.io) webhook → Gmail |
 
 ---
 
@@ -163,7 +168,8 @@ realtime-chat-app/
 │   │   │   ├── chatSocket.js       # Real-time events
 │   │   │   └── socketHelpers.js    # Broadcast helpers
 │   │   ├── utils/
-│   │   │   └── mailer.js           # SMTP password-reset emails
+│   │   │   ├── mailer.js           # SMTP password-reset emails
+│   │   │   └── n8nWebhook.js       # POST to n8n when a message is sent
 │   │   └── server.js               # App entry point
 │   ├── uploads/                    # Uploaded images
 │   ├── .env.example
@@ -345,6 +351,7 @@ npm run preview
 | `UPLOAD_DIR` | No | Image upload folder | `./uploads` |
 | `MAX_FILE_SIZE` | No | Max upload size in bytes | `10485760` (10 MB) |
 | `AUTO_VERIFY_EMAIL` | No | Skip email verify in dev | `true` |
+| `N8N_WEBHOOK_URL` | No | n8n webhook for **new message email alerts** | `https://your-instance.app.n8n.cloud/webhook/...` |
 
 **Example `backend/.env`:**
 
@@ -368,6 +375,9 @@ SMTP_FROM="Velora <your-gmail@gmail.com>"
 UPLOAD_DIR=./uploads
 MAX_FILE_SIZE=10485760
 AUTO_VERIFY_EMAIL=true
+
+# Optional: n8n — email when someone sends you a chat message
+N8N_WEBHOOK_URL=https://your-instance.app.n8n.cloud/webhook/your-webhook-id
 ```
 
 #### SMTP setup (forgot password emails)
@@ -417,6 +427,90 @@ CLIENT_URL=https://velora-web-6sxg.onrender.com
 
 ---
 
+## n8n — Email alerts for new messages (optional)
+
+When **n8n** is configured, Velora can notify people by **email** whenever they receive a new chat message — even if they are not looking at the app. This is separate from in-app notifications and separate from Velora’s built-in SMTP (forgot-password emails).
+
+### What the recipient sees (example)
+
+**Inbox**
+
+| From | Subject |
+|------|---------|
+| Pratistha Srivastava | Received New Msg On Velora App From Pratistha |
+
+**Email body (example):**
+
+```text
+Msg : Hii twinne how are youuu!!
+```
+
+You can format the subject and body in your **n8n Gmail node**; Velora sends the sender name, emails, and message text to n8n.
+
+### How it works
+
+```text
+User A sends "Hello" in Velora
+        │
+        ▼
+Velora backend (Socket.io message:send)
+        │
+        ├── senderName, senderEmail  (User A)
+        ├── recipientName, recipientEmail  (User B — each other member in the chat)
+        └── message  (text or preview for images/files)
+        │
+        ▼
+POST → N8N_WEBHOOK_URL
+        │
+        ▼
+Your n8n workflow (Webhook → Gmail)
+        │
+        ▼
+User B's inbox (e.g. priya@gmail.com)
+```
+
+- **Direct messages:** one email to the other person.
+- **Group chats:** one webhook call (and typically one email) **per other member** in the group.
+- Recipients must have an **email saved in MongoDB** (from sign-up or Google login).
+
+### JSON sent to n8n
+
+```json
+{
+  "senderName": "Pratistha",
+  "senderEmail": "pratistha9903@gmail.com",
+  "recipientName": "Priya",
+  "recipientEmail": "priya@gmail.com",
+  "message": "Hii twinne how are youuu!!"
+}
+```
+
+Implementation: `backend/src/utils/n8nWebhook.js`, triggered from `backend/src/sockets/chatSocket.js` after each message is saved.
+
+### Setup (developer)
+
+1. Create a free account at [n8n](https://n8n.io).
+2. Create a workflow:
+   - **Webhook** node (POST) — copy the webhook URL.
+   - **Gmail** node (or Send Email) — send to `{{ $json.recipientEmail }}`.
+3. Example Gmail **Subject:**  
+   `Received New Msg On Velora App From {{ $json.senderName }}`
+4. Example Gmail **Message:**  
+   `Msg : {{ $json.message }}`
+5. Add to `backend/.env`:
+   ```env
+   N8N_WEBHOOK_URL=https://your-instance.app.n8n.cloud/webhook/your-id
+   ```
+6. Restart the backend. Send a test message — backend log: `[n8n] notified for message to ...`
+
+**Testing:** URLs containing `webhook-test` only work while the workflow is in **Listen for test event** in n8n. For production, **activate** the workflow and use the production webhook URL (`/webhook/...` without `-test`).
+
+**Render:** add `N8N_WEBHOOK_URL` to the backend service environment variables and redeploy/restart the API.
+
+> Velora does not send these emails itself — **you** configure Gmail (or another provider) inside n8n.
+
+---
+
 ## How to Use the Application
 
 ### Single-user flow
@@ -434,6 +528,14 @@ CLIENT_URL=https://velora-web-6sxg.onrender.com
 5. **Bob:** The conversation appears in the sidebar → open it → message appears **live**
 6. **Bob:** Reply → Alice sees it instantly
 7. **Refresh either browser** → chat history is still there (MongoDB)
+
+### Email alert when someone messages you (n8n)
+
+1. Configure `N8N_WEBHOOK_URL` on the backend and an n8n workflow (Webhook → Gmail) — see [n8n section](#n8n--email-alerts-for-new-messages-optional)
+2. **Alice** sends Bob a message in Velora
+3. **Bob** receives an email in his inbox, for example:
+   - **Subject:** `Received New Msg On Velora App From Alice`
+   - **Body:** `Msg : <the message Alice sent>`
 
 ### Group chat
 
@@ -691,6 +793,7 @@ Video calls work locally with STUN alone, but **deployed users on different netw
 | `JWT_SECRET` | A long random secret |
 | `CLIENT_URL` | `https://velora-web-6sxg.onrender.com` |
 | `NODE_ENV` | `production` |
+| `N8N_WEBHOOK_URL` | (Optional) Your n8n production webhook URL for message email alerts |
 
 6. Deploy and copy your backend URL (e.g. `https://velora-api-a5sy.onrender.com`)
 
@@ -783,6 +886,15 @@ Get-NetTCPConnection -LocalPort 3001 | ForEach-Object { Stop-Process -Id $_.Owni
 - Check **Spam** folder
 - Without SMTP, use the **demo reset link** shown on screen or copy link from backend logs: `[password-reset] ... link=...`
 - Use the **same email** you registered with
+
+### n8n email alert not received
+
+- Set `N8N_WEBHOOK_URL` in `backend/.env` (or Render backend env) and **restart** the API
+- For **test** URLs (`webhook-test`), click **Listen for test event** in n8n before sending a message
+- Check backend logs for `[n8n] notified for message to ...` or `[n8n] skipped — recipient has no email`
+- Recipient must have registered with an **email** in Velora (visible in contact profile for shared chats)
+- Verify n8n workflow: Webhook → Gmail; **To** = `{{ $json.recipientEmail }}`
+- For live site, use the **production** webhook URL and **activate** the workflow
 
 ### Messages not appearing live
 
