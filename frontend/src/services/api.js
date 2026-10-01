@@ -141,6 +141,7 @@ export const api = {
   lookupUser: (username) =>
     request(`/api/rooms/users/lookup?username=${encodeURIComponent(username)}`),
   searchUsers: (q) => request(`/api/rooms/users/search?q=${encodeURIComponent(q)}`),
+  getUserProfile: (userId) => request(`/api/rooms/users/${userId}/profile`),
 
   getMessages: (roomId, params = {}) => {
     const qs = new URLSearchParams(params).toString();

@@ -26,6 +26,8 @@ function formatMember(doc) {
   return {
     id: u._id.toString(),
     username: u.username,
+    email: u.email || null,
+    emailVerified: !!u.emailVerified,
     displayName: u.displayName,
     avatarColor: u.avatarColor,
     avatarUrl: u.avatarUrl || null,
@@ -207,6 +209,40 @@ export async function clearRefreshToken(userId) {
 export async function getUserById(id) {
   const user = await User.findById(id);
   return formatUser(user);
+}
+
+/** Profile visible only if viewer shares a chat with the target user (or is self). */
+export async function getContactProfile(viewerId, targetUserId) {
+  const viewer = String(viewerId);
+  const target = String(targetUserId);
+  if (viewer === target) {
+    return getUserById(target);
+  }
+
+  const shared = await Conversation.findOne({
+    'members.userId': { $all: [viewer, target] },
+  }).lean();
+  if (!shared) {
+    const err = new Error('You can only view profiles of people you chat with');
+    err.status = 403;
+    throw err;
+  }
+
+  const user = await User.findById(target).lean();
+  if (!user) return null;
+
+  return {
+    id: user._id.toString(),
+    username: user.username,
+    email: user.email,
+    displayName: user.displayName,
+    avatarColor: user.avatarColor,
+    avatarUrl: user.avatarUrl || null,
+    bio: user.bio || '',
+    emailVerified: !!user.emailVerified,
+    lastSeen: user.lastSeen,
+    createdAt: user.createdAt,
+  };
 }
 
 export async function getUserByUsername(username) {

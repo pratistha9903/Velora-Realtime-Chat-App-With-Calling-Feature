@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import {
-  AtSign, Phone, Trash2, User, Video, MessageCircle,
+  AtSign, Mail, Phone, Trash2, User, Video, MessageCircle,
 } from 'lucide-react';
 import Modal from '../ui/Modal';
 import Avatar from '../ui/Avatar';
@@ -23,6 +23,8 @@ export default function ContactProfileModal({
   const { addToast } = useToast();
   const { map, setNickname, clearNickname, labelFor } = useContactNicknames();
   const [customName, setCustomName] = useState('');
+  const [profileDetails, setProfileDetails] = useState(null);
+  const [loadingProfile, setLoadingProfile] = useState(true);
   const [calls, setCalls] = useState([]);
   const [loadingCalls, setLoadingCalls] = useState(true);
   const [deleting, setDeleting] = useState(false);
@@ -31,6 +33,23 @@ export default function ContactProfileModal({
     if (!peer?.id) return;
     setCustomName(map[String(peer.id)] || '');
   }, [peer?.id, map]);
+
+  useEffect(() => {
+    if (!peer?.id) return undefined;
+    let cancelled = false;
+    (async () => {
+      setLoadingProfile(true);
+      try {
+        const data = await api.getUserProfile(peer.id);
+        if (!cancelled) setProfileDetails(data);
+      } catch {
+        if (!cancelled) setProfileDetails(null);
+      } finally {
+        if (!cancelled) setLoadingProfile(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [peer?.id]);
 
   useEffect(() => {
     if (!room?.id) return;
@@ -71,6 +90,9 @@ export default function ContactProfileModal({
   };
 
   const displayLabel = labelFor(peer.id, peer.displayName);
+  const email = profileDetails?.email || peer.email || null;
+  const emailVerified = profileDetails?.emailVerified ?? peer.emailVerified;
+  const bio = profileDetails?.bio ?? peer.bio;
 
   return (
     <Modal title="Contact info" onClose={onClose} width={440}>
@@ -121,11 +143,22 @@ export default function ContactProfileModal({
         </div>
 
         <div className="contact-section">
-          <h4>Details</h4>
+          <h4>Profile</h4>
           <div className="contact-detail-grid">
-            <div><span>Display name</span><strong>{peer.displayName}</strong></div>
-            <div><span>Username</span><strong>@{peer.username || 'unknown'}</strong></div>
-            {peer.bio && <div className="full"><span>Bio</span><strong>{peer.bio}</strong></div>}
+            <div><span>Display name</span><strong>{profileDetails?.displayName || peer.displayName}</strong></div>
+            <div><span>Username</span><strong>@{profileDetails?.username || peer.username || 'unknown'}</strong></div>
+            <div className="full">
+              <span><Mail size={12} style={{ verticalAlign: 'middle', marginRight: 4 }} />Email</span>
+              {loadingProfile && <strong>Loading…</strong>}
+              {!loadingProfile && email && (
+                <strong>
+                  {email}
+                  {emailVerified && <span className="contact-hint"> · verified</span>}
+                </strong>
+              )}
+              {!loadingProfile && !email && <strong className="contact-hint">Not available</strong>}
+            </div>
+            {bio && <div className="full"><span>Bio</span><strong>{bio}</strong></div>}
           </div>
         </div>
 

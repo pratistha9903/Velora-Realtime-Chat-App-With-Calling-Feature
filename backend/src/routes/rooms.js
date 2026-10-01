@@ -9,6 +9,7 @@ import {
   getAllUsers,
   searchUsers,
   lookupUserByUsername,
+  getContactProfile,
   updateConversationPrefs,
   addGroupMembers,
   removeGroupMember,
@@ -65,6 +66,21 @@ router.get('/users/search', async (req, res, next) => {
     const users = await searchUsers(q, req.user.id);
     res.json({ success: true, data: users });
   } catch (error) {
+    next(error);
+  }
+});
+
+router.get('/users/:userId/profile', async (req, res, next) => {
+  try {
+    const profile = await getContactProfile(req.user.id, req.params.userId);
+    if (!profile) {
+      return res.status(404).json({ success: false, error: 'User not found' });
+    }
+    res.json({ success: true, data: profile });
+  } catch (error) {
+    if (error.status === 403) {
+      return res.status(403).json({ success: false, error: error.message });
+    }
     next(error);
   }
 });

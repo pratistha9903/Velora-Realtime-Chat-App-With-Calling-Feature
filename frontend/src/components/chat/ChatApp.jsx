@@ -722,6 +722,9 @@ export default function ChatApp() {
             const room = await api.createDm(userId);
             handleChatCreated(room);
           }}
+          onViewProfile={(member) => {
+            openContactProfile({ peer: member, room: activeRoom });
+          }}
           onMembersChanged={async (updated) => {
             if (updated?.deleted) {
               setConversations((prev) => prev.filter((r) => r.id !== activeRoom.id));

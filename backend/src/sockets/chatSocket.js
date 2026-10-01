@@ -14,6 +14,7 @@ import {
   logCompletedCall,
   restoreConversationForUser,
 } from '../db/services.js';
+import { notifyN8nNewMessage } from '../utils/n8nWebhook.js';
 import {
   registerUserSocket,
   unregisterUserSocket,
@@ -237,6 +238,19 @@ export function setupChatSocket(io) {
 
         const members = await getRoomMembers(roomId);
         const otherMembers = members.filter((m) => m.id !== user.id);
+
+        const senderName = user.displayName || user.username;
+        const senderEmail = user.email || '';
+
+        for (const recipient of otherMembers) {
+          void notifyN8nNewMessage({
+            senderName,
+            senderEmail,
+            recipientName: recipient.displayName || recipient.username,
+            recipientEmail: recipient.email,
+            message,
+          });
+        }
 
         for (const member of otherMembers) {
           const restored = await restoreConversationForUser(roomId, member.id);

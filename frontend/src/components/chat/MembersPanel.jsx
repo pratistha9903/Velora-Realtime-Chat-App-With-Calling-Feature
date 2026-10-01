@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
-  Users, UserPlus, UserMinus, Shield, ShieldOff, Search, Crown, X,
+  Users, UserPlus, UserMinus, Shield, ShieldOff, Search, Crown, X, Info,
 } from 'lucide-react';
 import Avatar from '../ui/Avatar';
 import { api } from '../../services/api';
@@ -12,6 +12,7 @@ export default function MembersPanel({
   currentUser,
   room,
   onStartDm,
+  onViewProfile,
   onMembersChanged,
   onClose,
 }) {
@@ -234,6 +235,15 @@ export default function MembersPanel({
                 </button>
 
                 <div className="member-action-row">
+                  {!isMe && onViewProfile && (
+                    <button
+                      type="button"
+                      className="admin-chip"
+                      onClick={() => onViewProfile(m)}
+                    >
+                      <Info size={14} /> Profile
+                    </button>
+                  )}
                   {canPromote && (
                     <button
                       type="button"
