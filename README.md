@@ -17,6 +17,9 @@ A full-stack, premium real-time chat application (**Velora**) built with **React
 https://github.com/user-attachments/assets/48420d37-e4e8-47c1-88f0-c5e05e4edd42
 
 ---
+## New Message Email Automation Workflow
+
+<img width="1467" height="553" alt="Image" src="https://github.com/user-attachments/assets/8bff78a9-f584-4f17-9d68-468d337c603b" />
 
 ## Table of Contents
 
